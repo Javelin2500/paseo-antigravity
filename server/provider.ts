@@ -1,0 +1,281 @@
+import { AsyncLocalStorage } from "node:async_hooks";
+import { homedir } from "node:os";
+import { execCommand } from "@getpaseo/plugin/server";
+import { runAcpProvider } from "@getpaseo/plugin/server/acp";
+import type {
+  ProviderRegistration,
+  ProviderConnection,
+  ProviderEvent,
+  ProviderInput,
+} from "@getpaseo/plugin/server/provider";
+import {
+  createTransport,
+  type Context,
+  type OwnedTransport,
+} from "./transport";
+import { vendor, options } from "./vendor";
+import type { Limits } from "./watch";
+
+export function provider(
+  testOptions: { limits?: Limits; closeTimeoutMs?: number } = {},
+): ProviderRegistration {
+  return {
+    id: "antigravity-plus",
+    label: "Antigravity Plus",
+    icon: "icon.svg",
+    description: "复用官方 CLI 登录和配置；会话进度提示与可控取消。",
+    command: ["agy", "acp", "--disable-telemetry"],
+    docsUrl: "https://paseo.sh/docs/supported-providers/antigravity",
+    installation: {
+      installUrl: "https://antigravity.google/docs/getting-started?tab=cli",
+      async inspect({ launch, signal }) {
+        if (!launch?.resolved) return { status: "not_installed" };
+        const prefix = launch.args.indexOf("acp");
+        const { stdout } = await execCommand(
+          launch.command,
+          [
+            ...(prefix < 0 ? launch.args : launch.args.slice(0, prefix)),
+            "--version",
+          ],
+          { env: launch.env, signal, timeout: 10000, maxBuffer: 8192 },
+        );
+        return {
+          status: "installed",
+          version: /\b\d+\.\d+\.\d+\b/.exec(stdout)?.[0],
+        };
+      },
+    },
+    async status({ launch }) {
+      if (!launch)
+        return { available: false, diagnostic: "未找到官方 agy CLI。" };
+      const ssh = ["SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY"].find(
+        (key) => launch.env[key],
+      );
+      const signIn = ssh
+        ? `SSH 环境（${ssh}）：CLI 的登录来源可能与本机终端不同。`
+        : "非 SSH 环境：沿用 CLI 原有登录来源。";
+      try {
+        const prefix = launch.args.indexOf("acp");
+        if (prefix < 0)
+          return { available: false, diagnostic: "启动参数必须包含 acp。" };
+        const { stdout } = await execCommand(
+          launch.command,
+          [...launch.args.slice(0, prefix), "--version"],
+          { env: launch.env, timeout: 10000, maxBuffer: 8192 },
+        );
+        const version = /\b(\d+)\.(\d+)\.(\d+)\b/.exec(stdout);
+        if (
+          !version ||
+          Number(version[1]) < 1 ||
+          (Number(version[1]) === 1 && Number(version[2]) < 5)
+        )
+          return {
+            available: false,
+            diagnostic: "需要官方 agy 1.5 或更新版本。",
+          };
+        const probes = new Set<OwnedTransport>();
+        try {
+          const probe = runAcpProvider({
+            id: "antigravity-plus",
+            label: "Antigravity Plus",
+            acpOptions: { startupTimeoutMs: 11000 },
+            connector: () => {
+              const t = createTransport(
+                launch,
+                { cwd: homedir(), env: {} },
+                () => {},
+                { startup: 10000, silent: 900000, cancel: 5000, hint: 30000 },
+              );
+              probes.add(t);
+              return t.stream;
+            },
+          });
+          const connection = await probe.connect({
+            launch,
+            versions: [1],
+            capabilities: [],
+          });
+          await connection.close();
+        } finally {
+          await Promise.allSettled([...probes].map((t) => t.close()));
+        }
+        return {
+          available: true,
+          diagnostic: `CLI ${version[0]} 与 ACP 握手正常。账号及模型访问仍由创建会话验证。\n${signIn}`,
+        };
+      } catch {
+        return {
+          available: false,
+          diagnostic: `agy 版本检查或 ACP 握手失败。请检查可执行文件、acp 参数与登录环境。\n${signIn}`,
+        };
+      }
+    },
+    async connect(request): Promise<ProviderConnection> {
+      if (!request.launch) throw new Error("缺少官方 CLI 启动配置。");
+      const launch = request.launch;
+      const scope = new AsyncLocalStorage<Context>();
+      const owned = new Set<OwnedTransport>();
+      const listeners = new Set<(e: ProviderEvent) => void>();
+      const transports = new Map<string, OwnedTransport>();
+      const failures = new Map<string, string>();
+      let closed = false;
+      let connectionClosing: Promise<void> | undefined;
+      const emit = (e: ProviderEvent) => {
+        if (!closed) for (const l of listeners) l(e);
+      };
+      const shim = runAcpProvider({
+        id: "antigravity-plus",
+        label: "Antigravity Plus",
+        acpOptions: options,
+        transformers: [vendor],
+        connector: () => {
+          if (closed) throw new Error("Provider 已关闭。");
+          const context = scope.getStore() ?? { cwd: homedir(), env: {} };
+          if (context.sessionId) failures.delete(context.sessionId);
+          const transport = createTransport(
+            launch,
+            context,
+            (message) => {
+              if (context.sessionId) {
+                emit({
+                  type: "session.notice",
+                  sessionId: context.sessionId,
+                  notice: {
+                    id: "antigravity-progress",
+                    severity: "warning",
+                    title: message,
+                  },
+                });
+              }
+            },
+            testOptions.limits,
+            (message) => {
+              if (context.sessionId && !failures.has(context.sessionId))
+                failures.set(context.sessionId, message);
+            },
+          );
+          if (context.sessionId) transports.set(context.sessionId, transport);
+          owned.add(transport);
+          void transport.finished.then(() => owned.delete(transport));
+          return transport.stream;
+        },
+      });
+      let core: ProviderConnection;
+      try {
+        core = await shim.connect(request);
+      } catch (e) {
+        await Promise.allSettled([...owned].map((t) => t.close()));
+        throw e;
+      }
+      const hasText = new Map<string, boolean>();
+      const off = core.onEvent((e) => {
+        if (
+          e.type === "session.runtime_failed" ||
+          (e.type === "session.turn" && e.state === "failed")
+        ) {
+          const reason = failures.get(e.sessionId);
+          if (
+            reason &&
+            [
+              "ACP transport closed unexpectedly",
+              "Connection closed",
+              "ACP turn failed",
+            ].includes(e.error?.message ?? "")
+          )
+            e = { ...e, error: { ...e.error, message: reason } };
+        }
+        if (e.type === "session.closed" || e.type === "session.runtime_failed")
+          hasText.delete(e.sessionId);
+        if (e.type === "session.closed") {
+          transports.delete(e.sessionId);
+          failures.delete(e.sessionId);
+        }
+        if (e.type === "session.turn" && e.state === "started")
+          hasText.set(e.sessionId, false);
+        if (
+          e.type === "timeline.item" &&
+          e.item.type === "assistant_message" &&
+          e.item.text.trim()
+        )
+          hasText.set(e.sessionId, true);
+        if (
+          e.type === "session.turn" &&
+          e.state === "completed" &&
+          hasText.get(e.sessionId) === false
+        )
+          emit({
+            type: "session.notice",
+            sessionId: e.sessionId,
+            notice: {
+              id: "antigravity-empty",
+              severity: "warning",
+              title:
+                "本轮已结束，但没有返回正文。请检查工具结果或官方 CLI 的错误提示；消息没有自动重发。",
+            },
+          });
+        if (e.type === "session.turn" && e.state !== "started") {
+          hasText.delete(e.sessionId);
+          transports.get(e.sessionId)?.settle();
+        }
+        emit(e);
+      });
+      return {
+        version: core.version,
+        capabilities: core.capabilities,
+        onEvent(l) {
+          listeners.add(l);
+          return () => {
+            listeners.delete(l);
+          };
+        },
+        send(input: ProviderInput) {
+          if (closed) return Promise.reject(new Error("Provider 已关闭。"));
+          const context: Context =
+            input.type === "session.open"
+              ? {
+                  cwd: input.config.cwd,
+                  env: input.config.env,
+                  sessionId: input.sessionId,
+                }
+              : {
+                  cwd: "cwd" in input && input.cwd ? input.cwd : homedir(),
+                  env: {},
+                };
+          return scope.run(context, () => core.send(input));
+        },
+        close() {
+          return (connectionClosing ??= (async () => {
+            closed = true;
+            off();
+            listeners.clear();
+            let timer: ReturnType<typeof setTimeout> | undefined;
+            const graceful = core.close();
+            try {
+              await Promise.race([
+                graceful,
+                new Promise<void>((resolve) => {
+                  timer = setTimeout(
+                    resolve,
+                    testOptions.closeTimeoutMs ?? 5000,
+                  );
+                  timer.unref();
+                }),
+              ]);
+            } catch {
+              /* force cleanup also runs when graceful close fails */
+            } finally {
+              clearTimeout(timer);
+              await Promise.allSettled([...owned].map((t) => t.close()));
+              owned.clear();
+              transports.clear();
+              failures.clear();
+              hasText.clear();
+            }
+            // Do not wait indefinitely for an SDK operation stuck outside the transport.
+            void graceful.catch(() => {});
+          })());
+        },
+      };
+    },
+  };
+}

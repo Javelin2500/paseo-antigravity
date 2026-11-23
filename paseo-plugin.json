@@ -1,0 +1,7 @@
+{
+  "id": "antigravity-plus",
+  "name": "Antigravity Plus",
+  "requirements": {
+    "paseo": ">=0.17.3 <0.18.0"
+  }
+}
