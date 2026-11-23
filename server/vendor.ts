@@ -42,8 +42,9 @@ export const options: AcpOptions = {
   waitForInitialCommands: true,
   initialCommandsTimeoutMs: 1000,
   // transport.ts holds session/load's response through a byte-aware replay quiet window.
-  // SDK drains those notifications before closing its replay window; no second blind timer.
-  loadReplayQuietPeriodMs: 0,
+  // Keep the SDK's post-ready 'skip' guard until the first prompt. Zero disables it.
+  // Byte-aware waiting remains in transport; this minimal SDK wait only closes its replay phase.
+  loadReplayQuietPeriodMs: 1,
   deferTurnOnRunningTools: {
     keepsTurnOpen(tool) {
       const input = tool.input;

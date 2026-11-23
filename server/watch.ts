@@ -27,7 +27,8 @@ interface Session {
   tools: Map<string, Tool>;
   approvals: Set<Id>;
   progress: number;
-  cancelAt?: number;
+  cancelPrompts: Map<Id, number>;
+  cancelTools: Map<string, number>;
   noticed: boolean;
   replay: boolean;
   retiredTools: Set<string>;
@@ -52,6 +53,8 @@ export class Watch {
         tools: new Map(),
         approvals: new Set(),
         progress: now,
+        cancelPrompts: new Map(),
+        cancelTools: new Map(),
         noticed: false,
         replay: false,
         retiredTools: new Set(),
@@ -63,30 +66,28 @@ export class Watch {
   private hasTools(s: Session) {
     return [...s.tools.values()].some((t) => !t.detached);
   }
-  private disarmIdle(s: Session) {
-    if (!s.prompts.size && !this.hasTools(s)) s.cancelAt = undefined;
-  }
-  private clearTransient(s: Session) {
-    for (const id of s.tools.keys()) s.retiredTools.add(id);
+  private retireTool(s: Session, id: string) {
+    s.tools.delete(id);
+    s.cancelTools.delete(id);
+    s.retiredTools.add(id);
     while (s.retiredTools.size > 2048)
       s.retiredTools.delete(s.retiredTools.values().next().value!);
-    s.tools.clear();
-    s.approvals.clear();
-    for (const [id, sid] of this.permissions)
-      if (this.sessions.get(sid) === s) this.permissions.delete(id);
-    this.disarmIdle(s);
   }
-  /** Only the SDK knows when a deferred turn really finishes. */
-  settle() {
+  /** A completed turn can preserve background tools. Only actual tool terminal events retire them. */
+  finishTool(id: string) {
     for (const s of this.sessions.values())
-      if (!s.prompts.size) this.clearTransient(s);
+      if (!s.replay && s.tools.has(id)) this.retireTool(s, id);
   }
-  /** A suspended host is not a silent agent. Preserve operations started after wake. */
+  /** Reset pre-suspension clocks, including the final timer slice, but preserve fresh post-wake work. */
   resume(now: number, lastTick: number) {
-    for (const c of this.calls.values()) if (c.at <= lastTick) c.at = now;
+    const rebase = (at: number) =>
+      (now < lastTick && at > now) || now - at > 5000 ? now : at;
+    for (const c of this.calls.values()) c.at = rebase(c.at);
     for (const s of this.sessions.values()) {
-      if (s.progress <= lastTick) s.progress = now;
-      if (s.cancelAt !== undefined && s.cancelAt <= lastTick) s.cancelAt = now;
+      s.progress = rebase(s.progress);
+      for (const [id, at] of s.cancelPrompts)
+        s.cancelPrompts.set(id, rebase(at));
+      for (const [id, at] of s.cancelTools) s.cancelTools.set(id, rebase(at));
     }
   }
   observe(direction: "out" | "in", frame: AcpStreamMessage, now: number): void {
@@ -102,7 +103,6 @@ export class Watch {
           this.session(sid, now).replay = true;
         if (m.method === "session/prompt" && sid) {
           const s = this.session(sid, now);
-          this.disarmIdle(s);
           if (!s.prompts.size && !this.hasTools(s)) s.noticed = false;
           s.replay = false;
           s.prompts.add(id);
@@ -111,8 +111,13 @@ export class Watch {
       }
       if (m.method === "session/cancel" && sid) {
         const s = this.session(sid, now);
-        if (s.prompts.size || this.hasTools(s)) s.cancelAt ??= now;
-        else s.cancelAt = undefined;
+        // Snapshot only the targets that exist now. Repeated Stop keeps each old
+        // target's first deadline; newly targeted work receives its own deadline.
+        for (const id of s.prompts)
+          if (!s.cancelPrompts.has(id)) s.cancelPrompts.set(id, now);
+        for (const [id, tool] of s.tools)
+          if (!tool.detached && !s.cancelTools.has(id))
+            s.cancelTools.set(id, now);
       }
       if (!m.method && id !== undefined) {
         const session = this.permissions.get(id);
@@ -132,13 +137,9 @@ export class Watch {
         const s = this.session(call.session, now);
         s.prompts.delete(id);
         s.progress = now;
-        // A terminal failure/cancel clears transient tools only once all wire prompts settled.
-        if (
-          !s.prompts.size &&
-          (m.error !== undefined || record(m.result).stopReason === "cancelled")
-        )
-          this.clearTransient(s);
-        this.disarmIdle(s);
+        s.cancelPrompts.delete(id);
+        // Tool and approval completion comes from explicit wire/SDK events, not
+        // from a prompt's stop reason, which may coexist with other active work.
       }
     }
     if (m.method === "session/request_permission" && sid && id !== undefined) {
@@ -180,9 +181,8 @@ export class Watch {
             input.CronExpression.trim().length > 0),
       };
       if (["completed", "failed", "cancelled"].includes(tool.status))
-        s.tools.delete(u.toolCallId);
+        this.retireTool(s, u.toolCallId);
       else s.tools.set(u.toolCallId, tool);
-      this.disarmIdle(s);
     }
   }
   check(now: number): WatchResult {
@@ -198,7 +198,11 @@ export class Watch {
         };
     }
     for (const s of this.sessions.values()) {
-      if (s.cancelAt !== undefined && now - s.cancelAt >= this.limits.cancel)
+      if (
+        [...s.cancelPrompts.values(), ...s.cancelTools.values()].some(
+          (at) => now - at >= this.limits.cancel,
+        )
+      )
         return {
           failure:
             "Antigravity 未及时结束取消请求，已关闭本会话进程；未重发消息。",

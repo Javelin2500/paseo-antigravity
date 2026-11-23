@@ -14,10 +14,14 @@ import {
   type OwnedTransport,
 } from "./transport";
 import { vendor, options } from "./vendor";
-import type { Limits } from "./watch";
+import { defaults, type Limits } from "./watch";
 
 export function provider(
-  testOptions: { limits?: Limits; closeTimeoutMs?: number } = {},
+  testOptions: {
+    limits?: Limits;
+    closeTimeoutMs?: number;
+    statusTimeoutMs?: number;
+  } = {},
 ): ProviderRegistration {
   return {
     id: "antigravity-plus",
@@ -54,6 +58,12 @@ export function provider(
       const signIn = ssh
         ? `SSH 环境（${ssh}）：CLI 的登录来源可能与本机终端不同。`
         : "非 SSH 环境：沿用 CLI 原有登录来源。";
+      const deadline =
+        Date.now() +
+        (testOptions.statusTimeoutMs ?? options.startupTimeoutMs ?? 95000);
+      const remaining = () => Math.max(1, deadline - Date.now());
+      let phase = "CLI 版本检查";
+      let safeFailure: string | undefined;
       try {
         const prefix = launch.args.indexOf("acp");
         if (prefix < 0)
@@ -61,7 +71,7 @@ export function provider(
         const { stdout } = await execCommand(
           launch.command,
           [...launch.args.slice(0, prefix), "--version"],
-          { env: launch.env, timeout: 10000, maxBuffer: 8192 },
+          { env: launch.env, timeout: remaining(), maxBuffer: 8192 },
         );
         const version = /\b(\d+)\.(\d+)\.(\d+)\b/.exec(stdout);
         if (
@@ -73,18 +83,25 @@ export function provider(
             available: false,
             diagnostic: "需要官方 agy 1.5 或更新版本。",
           };
+        phase = "ACP 握手";
         const probes = new Set<OwnedTransport>();
         try {
           const probe = runAcpProvider({
             id: "antigravity-plus",
             label: "Antigravity Plus",
-            acpOptions: { startupTimeoutMs: 11000 },
+            acpOptions: { startupTimeoutMs: remaining() },
             connector: () => {
               const t = createTransport(
                 launch,
                 { cwd: homedir(), env: {} },
                 () => {},
-                { startup: 10000, silent: 900000, cancel: 5000, hint: 30000 },
+                {
+                  ...defaults,
+                  startup: Math.min(defaults.startup, remaining()),
+                },
+                (message) => {
+                  safeFailure ??= message;
+                },
               );
               probes.add(t);
               return t.stream;
@@ -106,7 +123,9 @@ export function provider(
       } catch {
         return {
           available: false,
-          diagnostic: `agy 版本检查或 ACP 握手失败。请检查可执行文件、acp 参数与登录环境。\n${signIn}`,
+          // Only our fixed transport diagnostics are safe to show. Never echo raw
+          // exec/SDK errors, which can contain command output or an authorization URL.
+          diagnostic: `${safeFailure ?? `${phase}失败或超过启动时限。请检查可执行文件、acp 参数与登录环境。`}\n${signIn}`,
         };
       }
     },
@@ -179,6 +198,7 @@ export function provider(
             [
               "ACP transport closed unexpectedly",
               "Connection closed",
+              "ACP connection closed",
               "ACP turn failed",
             ].includes(e.error?.message ?? "")
           )
@@ -215,7 +235,14 @@ export function provider(
           });
         if (e.type === "session.turn" && e.state !== "started") {
           hasText.delete(e.sessionId);
-          transports.get(e.sessionId)?.settle();
+          // Completion of a foreground turn does not imply its background tools ended.
+        }
+        if (
+          e.type === "timeline.item" &&
+          e.item.type === "tool_call" &&
+          ["completed", "failed", "canceled"].includes(e.item.status)
+        ) {
+          transports.get(e.sessionId)?.finishTool(e.item.callId);
         }
         emit(e);
       });

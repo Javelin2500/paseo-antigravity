@@ -15,7 +15,7 @@ export interface OwnedTransport {
   close(): Promise<void>;
   finished: Promise<void>;
   pid: number | undefined;
-  settle(): void;
+  finishTool(id: string): void;
 }
 const MAX_FRAME = 16 * 1024 * 1024;
 const REPLAY_QUIET_MS = 200;
@@ -82,6 +82,14 @@ export function createTransport(
   const stopOwned = () => (groupClosing ??= stopProcessGroup(child.pid));
   let exitTimer: ReturnType<typeof setTimeout> | undefined,
     replayTimer: ReturnType<typeof setTimeout> | undefined;
+  let exitInfo:
+    | { code: number | null; signal: NodeJS.Signals | null }
+    | undefined;
+  let exited!: () => void;
+  const exitObserved = new Promise<void>((resolve) => {
+    exited = resolve;
+  });
+  let ending: Promise<void> | undefined;
   const decoder = new StringDecoder("utf8");
   let buffer = "",
     lastRead = Date.now();
@@ -171,28 +179,48 @@ export function createTransport(
     if (buffer.length > MAX_FRAME)
       throw new Error("Antigravity 消息超过大小限制。");
   };
-  const endOutput = () => {
-    if (closed) return;
-    try {
-      buffer += decoder.end();
-      consume();
-      if (buffer.trim()) receive(parse(buffer.trim()));
-      buffer = "";
-      if (loadResponse) {
-        const frame = loadResponse;
-        loadResponse = undefined;
-        loadId = undefined;
-        deliver(frame);
+  const endOutput = (): Promise<void> =>
+    (ending ??= (async () => {
+      if (closed) return;
+      try {
+        buffer += decoder.end();
+        consume();
+        if (buffer.trim()) receive(parse(buffer.trim()));
+        buffer = "";
+        if (loadResponse) {
+          const frame = loadResponse;
+          loadResponse = undefined;
+          loadId = undefined;
+          deliver(frame);
+        }
+        // stdout EOF can precede Node's exit event. Briefly wait for metadata without
+        // delaying delivery of already parsed final replies or inventing a failure code.
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        try {
+          await Promise.race([
+            exitObserved,
+            new Promise<void>((resolve) => {
+              timer = setTimeout(resolve, 100);
+            }),
+          ]);
+        } finally {
+          clearTimeout(timer);
+        }
+        if (closed) return;
+        const detail = exitInfo?.signal
+          ? `（信号 ${exitInfo.signal}）`
+          : typeof exitInfo?.code === "number"
+            ? `（退出码 ${exitInfo.code}）`
+            : "";
+        recordFailure(
+          `Antigravity CLI 已关闭输出或退出${detail}。请刷新会话后继续；未重发消息。`,
+        );
+        // close() preserves queued replies; error() would discard them.
+        void close();
+      } catch (e) {
+        fail(e instanceof Error ? e.message : "ACP 尾帧错误。");
       }
-      recordFailure(
-        "Antigravity CLI 已关闭输出或退出。请刷新会话后继续；未重发消息。",
-      );
-      // close() preserves queued replies; error() would discard them.
-      void close();
-    } catch (e) {
-      fail(e instanceof Error ? e.message : "ACP 尾帧错误。");
-    }
-  };
+    })());
   const drainThenClose = () => {
     if (!closed && !exitTimer) {
       // Do not manufacture EOF while stdout is paused with unread final frames.
@@ -295,8 +323,10 @@ export function createTransport(
     }
   });
   child.stdout.once("end", endOutput);
-  child.once("exit", () => {
-    if (child.stdout.readableEnded) endOutput();
+  child.once("exit", (code, signal) => {
+    exitInfo = { code, signal };
+    exited();
+    if (child.stdout.readableEnded) void endOutput();
     else drainThenClose();
   });
   return {
@@ -304,6 +334,6 @@ export function createTransport(
     close,
     finished,
     pid: child.pid,
-    settle: () => watch.settle(),
+    finishTool: (id) => watch.finishTool(id),
   };
 }

@@ -19,6 +19,30 @@ test("status validates ACP handshake, not just executable version", async () => 
     false,
   );
 });
+test("status retains safe login diagnostic without printing authorization URL", async () => {
+  const result = await provider().status!({ launch: launch("login-required") });
+  assert.equal(result.available, false);
+  assert.match(result.diagnostic!, /登录/);
+  assert.doesNotMatch(
+    result.diagnostic!,
+    /accounts\.google|fixture-do-not-show/,
+  );
+});
+test("status uses one cold-start budget for version and handshake", async () => {
+  const result = await provider({ statusTimeoutMs: 1000 }).status!({
+    launch: launch("slow-init"),
+  });
+  assert.equal(result.available, true);
+});
+test("status timeout remains bounded and reports the failed phase", async () => {
+  const at = Date.now();
+  const result = await provider({ statusTimeoutMs: 150 }).status!({
+    launch: launch("init-hang"),
+  });
+  assert.equal(result.available, false);
+  assert.match(result.diagnostic!, /ACP|initialize/);
+  assert.ok(Date.now() - at < 2000);
+});
 test("installation inspect preserves custom prefix without acp", async () => {
   const p = provider();
   const result = await p.installation!.inspect!({

@@ -87,6 +87,8 @@ for (const [text, reason] of [
   ["bad", "非 ACP"],
   ["silent", "连续无进展"],
   ["deferred-bad", "非 ACP"],
+  ["exit-17", "退出码 17"],
+  ["signal-term", "SIGTERM"],
 ] as const) {
   test(
     `SDK delivers specific runtime and turn failure: ${text}`,
@@ -112,6 +114,7 @@ for (const [text, reason] of [
           turn.type === "session.turn" &&
             turn.state === "failed" &&
             turn.error?.message.includes(reason),
+          JSON.stringify(turn),
         );
       } finally {
         await h.c.close();
@@ -139,6 +142,39 @@ test(
       await h.wait(
         (e) => e.type === "session.turn" && e.state === "canceled",
         from,
+      );
+      from = await h.prompt("silent");
+      const e = await h.wait((e) => e.type === "session.runtime_failed", from);
+      assert.ok(
+        e.type === "session.runtime_failed" &&
+          e.error.message.includes("连续无进展"),
+      );
+    } finally {
+      await h.c.close();
+    }
+  },
+);
+test(
+  "0.2.2 SDK terminalizes failed RPC tools without poisoning the next turn",
+  { timeout: 5000 },
+  async () => {
+    const h = await setup();
+    try {
+      await h.open();
+      let from = await h.prompt("tool-error");
+      await h.wait(
+        (e) => e.type === "session.turn" && e.state === "failed",
+        from,
+      );
+      assert.ok(
+        h.rows
+          .slice(from)
+          .some(
+            (e) =>
+              e.type === "timeline.item" &&
+              e.item.type === "tool_call" &&
+              e.item.status === "failed",
+          ),
       );
       from = await h.prompt("silent");
       const e = await h.wait((e) => e.type === "session.runtime_failed", from);
@@ -260,6 +296,82 @@ test(
         error.type === "session.runtime_failed" &&
           error.error.message.includes("连续无进展"),
       );
+    } finally {
+      await h.c.close();
+    }
+  },
+);
+for (const history of ["skip", "replay"] as const)
+  test(
+    `0.2.2 late history after ready is skipped until first prompt (${history})`,
+    { timeout: 6000 },
+    async () => {
+      const h = await setup("late-history");
+      try {
+        await h.open();
+        const opened = h.rows.find((e) => e.type === "session.opened");
+        assert.ok(opened?.type === "session.opened");
+        await h.c.send({
+          type: "session.close",
+          sessionId: "s",
+          requestId: "close",
+        });
+        await h.wait((e) => e.type === "session.closed");
+        const from = h.rows.length;
+        await h.c.send({
+          type: "session.open",
+          sessionId: "s",
+          requestId: "restore",
+          config,
+          history,
+          persistence: opened.persistence,
+        });
+        await h.wait((e) => e.type === "session.ready", from);
+        await sleep(350);
+        assert.ok(
+          !h.rows
+            .slice(from)
+            .some(
+              (e) =>
+                e.type === "timeline.item" &&
+                ((e.item.type === "assistant_message" &&
+                  e.item.text === "LATE_HISTORY") ||
+                  (e.item.type === "tool_call" &&
+                    e.item.callId === "late-ghost")),
+            ),
+        );
+        const p = await h.prompt("hello");
+        await h.wait(
+          (e) => e.type === "session.turn" && e.state === "completed",
+          p,
+        );
+      } finally {
+        await h.c.close();
+      }
+    },
+  );
+test(
+  "0.2.2 auto followup retains background tool until its real terminal event",
+  { timeout: 5000 },
+  async () => {
+    const h = await setup();
+    try {
+      await h.open();
+      await h.prompt("background-first");
+      await sleep(80);
+      const from = await h.prompt("background-follow");
+      await h.wait(
+        (e) =>
+          e.type === "timeline.item" &&
+          e.item.type === "assistant_message" &&
+          e.item.text === "DONE",
+        from,
+      );
+      await h.wait(
+        (e) => e.type === "session.turn" && e.state === "completed",
+        from,
+      );
+      assert.ok(!h.rows.some((e) => e.type === "session.runtime_failed"));
     } finally {
       await h.c.close();
     }

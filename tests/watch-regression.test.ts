@@ -51,7 +51,7 @@ test("SDK terminalization clears ghost tools and ignores their late echoes", () 
   prompt(w);
   tool(w);
   response(w);
-  w.settle();
+  w.finishTool("old");
   tool(w, "in_progress", 4);
   assert.equal(w.check(40).hints.length, 0);
   prompt(w, 2, 50);
@@ -102,16 +102,17 @@ test("load replay tools do not block later inactivity detection", () => {
   prompt(w, 1, 50);
   assert.ok(w.check(201).failure);
 });
-test("cancelled prompt clears ghost tools and approvals", () => {
+test("SDK terminal event after cancellation clears ghost tools", () => {
   const w = new Watch(limits);
   prompt(w);
   tool(w);
   response(w, 1, "cancelled", 2);
+  w.finishTool("old"); // SDK terminalizeTransientItems emits the canceled tool.
   assert.equal(w.check(40).hints.length, 0);
   prompt(w, 2, 50);
   assert.ok(w.check(201).failure);
 });
-test("RPC error clears ghost tools", () => {
+test("SDK terminal event after RPC error clears ghost tools", () => {
   const w = new Watch(limits);
   prompt(w);
   tool(w);
@@ -120,6 +121,7 @@ test("RPC error clears ghost tools", () => {
     { jsonrpc: "2.0", id: 1, error: { code: -1, message: "fixture" } },
     2,
   );
+  w.finishTool("old"); // Failed turn has an explicit SDK tool terminal event.
   prompt(w, 2, 50);
   assert.ok(w.check(201).failure);
 });

@@ -1,4 +1,36 @@
-# Antigravity Plus 0.2.1 Validation
+# Antigravity Plus 0.2.2 Validation
+
+Environment: macOS, Paseo 0.17.3, official `agy` 1.5.15. This is a targeted follow-up to 0.2.1, not a new provider architecture.
+
+## Changes and regression evidence
+
+| Issue | 0.2.2 fix and evidence |
+| --- | --- |
+| Late replay leaking after ready | Retains the transport's 200ms byte-aware boundary and sets SDK `loadReplayQuietPeriodMs` to 1 instead of 0. This preserves the SDK's `skip` guard until the first new prompt. Real-SDK tests cover both history modes, history arriving at 260ms, ghost tools, and the next prompt completing. Large fragmented UTF-8 replay remains covered. |
+| Follow-up removing preserved background tools | Removed whole-turn `settle()` cleanup. Retires individual tools on explicit ACP terminal updates or SDK completed/failed/canceled tool events. A test keeps a background tool active across an auto follow-up beyond the scaled silence deadline, then verifies its completion. |
+| Cancel deadline crossing into later work | Request IDs and tool IDs retain separate cancellation timestamps. Completing a target releases only its own deadline; later targets receive their own deadlines; repeated Stop does not postpone an existing deadline. Tests cover response order, repeated cancellation, new tools, and similar tool/request IDs. |
+| Status probe cold-start inconsistency | Version check and handshake share a ~95-second budget. Recognized fixed transport diagnostics preserve sign-in guidance without exposing raw exec/SDK output or authorization URLs. Tests use scaled budgets for slow-start, timeout and redaction cases. |
+| Final pre-sleep timer slice | Rebase stale timestamps older than 5 seconds and future timestamps after clock regression, including work started after the last tick. Preserve fresh post-wake cancellation deadlines. Tested with injected clocks, not a physical lid-close test. |
+| Missing exit diagnostics | Flush final frames first, then wait at most 100ms for the exit event. Include an exit code or signal when available. Exit code 17 and SIGTERM are verified in both SDK runtime-failure and failed-turn events, including the generic `ACP connection closed` variant. |
+
+## Verification
+
+- Before implementation changes, six added counterexamples failed on 0.2.1: two late-replay modes, preserved background work, an old cancel killing a new request, a later cancellation inheriting an earlier deadline, and the pre-sleep final timer slice.
+- `pnpm typecheck`, `git diff --check`, and all 66 tests pass.
+- Corrected older unit tests that assumed a prompt/turn ending implied all tools ended. They now simulate explicit SDK tool-terminal events; real-SDK cancellation coverage still passes, and a new RPC-error integration test verifies stale tools do not poison the next turn.
+- `pnpm test:live --confirm-live`: 9 models discovered; Gemini 4 Neon replies correctly, remembers the marker after native close/reload, cancels after visible streaming (8ms in this run), handles an immediate follow-up, and handles a new prompt 6 seconds after idle cancellation.
+- Paseo's installed compiler built the server bundle. The plugin was reloaded only with no running Plus requests. A separate test agent using `gemini-4-neon` / `high` / `default` returned `PASEO_022_OK`; reloading that test agent and asking for the marker returned it again. No existing user conversation was prompted or archived.
+- Installed usage source: `antigravity-plus`, `available`, 5 windows. No CLI login or credentials were changed.
+
+## Limits
+
+These checks validate the listed scenarios, not indefinite stability. Late-history protection follows the SDK's first-new-prompt boundary. Native SQLite/inbox/transcript inspection, hidden upstream-error classification, orphan-subagent detection, Windows support and Paseo 0.18 compatibility remain out of scope. Long tools that never report completion can still require manual Stop. Real long-running subagent stress testing and mobile visual testing were not performed.
+
+During the earlier 0.2.1 installed test, one post-reload request exceeded 90 seconds without a reply; Stop, a subsequent new turn and a later reload succeeded. Its root cause remains unknown. The successful 0.2.2 checks do not retroactively diagnose that incident.
+
+## Historical 0.2.1 validation record
+
+The following is the previous release's record; its whole-turn cleanup and replay-timer assumptions are superseded by the 0.2.2 changes above.
 
 Environment: macOS, Paseo 0.17.3, official `agy` 1.5.15.
 

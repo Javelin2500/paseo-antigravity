@@ -10,6 +10,8 @@ const update = (u) =>
 const ready = () =>
   update({ sessionUpdate: "available_commands_update", availableCommands: [] });
 if (process.argv.includes("--version")) {
+  if (process.env.SCENARIO === "slow-init")
+    await new Promise((resolve) => setTimeout(resolve, 60));
   console.log("1.5.15");
   process.exit(0);
 }
@@ -44,6 +46,21 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
   const m = JSON.parse(line),
     r = (result) => send({ id: m.id, result });
   if (m.method === "initialize") {
+    if (process.env.SCENARIO === "login-required") {
+      console.log(
+        "Open the following link to authenticate https://accounts.google.com/?code=fixture-do-not-show",
+      );
+      return;
+    }
+    if (process.env.SCENARIO === "slow-init") {
+      setTimeout(
+        () =>
+          r({ protocolVersion: 1, agentCapabilities: { loadSession: true } }),
+        120,
+      );
+      return;
+    }
+    if (process.env.SCENARIO === "init-hang") return;
     if (process.env.SCENARIO === "init-error")
       send({
         id: m.id,
@@ -63,6 +80,23 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
   if (m.method === "session/load") {
     r({});
     ready();
+    if (process.env.SCENARIO === "late-history") {
+      setTimeout(() => {
+        update({
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "LATE_HISTORY" },
+        });
+        update({
+          sessionUpdate: "tool_call",
+          toolCallId: "late-ghost",
+          title: "late",
+          kind: "execute",
+          status: "in_progress",
+          rawInput: {},
+        });
+      }, 260);
+      return;
+    }
     update({
       sessionUpdate: "tool_call",
       toolCallId: "old-history",
@@ -99,12 +133,48 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
   if (m.method === "session/prompt") {
     const text = m.params.prompt[0].text;
     pending = m.id;
+    if (text === "background-first") {
+      update({
+        sessionUpdate: "tool_call",
+        toolCallId: "bg1",
+        title: "background",
+        kind: "execute",
+        status: "in_progress",
+        rawInput: {},
+      });
+      r({ stopReason: "end_turn" });
+      pending = undefined;
+      return;
+    }
+    if (text === "background-follow") {
+      setTimeout(() => {
+        update({
+          sessionUpdate: "tool_call_update",
+          toolCallId: "bg1",
+          status: "completed",
+        });
+        update({
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "DONE" },
+        });
+        r({ stopReason: "end_turn" });
+        pending = undefined;
+      }, 450);
+      return;
+    }
     if (text === "silent" || text === "ignore-cancel") return;
+    if (text === "exit-17") {
+      process.exit(17);
+    }
+    if (text === "signal-term") {
+      process.kill(process.pid, "SIGTERM");
+      return;
+    }
     if (text === "bad") {
       setTimeout(() => console.log("not ACP"), 20);
       return;
     }
-    if (text === "tool" || text === "deferred-bad") {
+    if (text === "tool" || text === "deferred-bad" || text === "tool-error") {
       update({
         sessionUpdate: "tool_call",
         toolCallId: "live-tool",
@@ -113,6 +183,14 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
         status: "in_progress",
         rawInput: {},
       });
+      if (text === "tool-error") {
+        send({
+          id: m.id,
+          error: { code: -32001, message: "fixture tool failure" },
+        });
+        pending = undefined;
+        return;
+      }
       if (text === "deferred-bad") {
         r({ stopReason: "end_turn" });
         setTimeout(() => console.log("not ACP"), 50);

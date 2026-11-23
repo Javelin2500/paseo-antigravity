@@ -21,14 +21,16 @@ Antigravity Plus wraps the official `agy acp` binary using Paseo's ACP SDK while
 - **Cancel race and stale tool-call protection**
   - Ignores idle cancel requests so they cannot poison or kill a subsequent turn.
   - Keeps `session/load` history replay out of live tool-call tracking.
-  - Clears transient tool and approval state on cancellation, RPC failure, and SDK turn settlement, and ignores late updates for already-retired tool calls.
+  - Tracks cancellation targets individually: completing an old canceled request releases its deadline without affecting later requests; repeated cancellation does not postpone an existing target's deadline.
+  - Retires tools only on explicit ACP or SDK tool-terminal events. A foreground turn completing does not clear background tools preserved by the SDK for a follow-up turn.
 - **Preserved root-cause error messages**
-  - Records the underlying transport or watchdog failure reason before closing the stream.
+  - Records the underlying transport or watchdog failure reason before closing the stream, including an unexpected exit code or signal when available.
   - Replaces generic SDK errors (`ACP transport closed unexpectedly`, `Connection closed`, `ACP turn failed`) with the actual cause without overwriting meaningful upstream errors.
 - **Byte-aware history replay for large sessions**
   - Holds the `session/load` response in the byte-aware transport until no partial frame remains and a 200ms quiet boundary is reached, preventing large or fragmented multi-byte UTF-8 histories from being truncated mid-frame.
+  - Keeps the SDK's post-ready replay-skip guard until the first new prompt, so late historical tools do not become live work.
 - **Host sleep and wake resilience**
-  - Detects system suspend or clock jumps (>5-second timer gap) and resets pre-sleep progress and request timers instead of falsely timing out after waking a machine.
+  - Detects system suspend or clock jumps (>5-second timer gap), including operations started in the final timer slice before suspension. Old or future-dated timestamps are rebased while fresh post-wake operations retain their deadlines.
 - **EOF, EPIPE, and backpressure safety**
   - Flushes `StringDecoder` and parses trailing newline-free frames on EOF.
   - Avoids discarding queued replies on `EPIPE` and respects consumer backpressure without manufacturing premature EOF.
@@ -36,6 +38,7 @@ Antigravity Plus wraps the official `agy acp` binary using Paseo's ACP SDK while
   - Reuses your existing `agy` login, config, and environment (`GEMINI_HOME`, `SSH_*`, and `BROWSER` are never overwritten).
   - Keeps per-model thinking options, slash commands, skills, native/MCP tool-call mappings, and opt-in `Full access` mode.
   - Restores real CLI version + ACP handshake diagnostics in provider status checks and quota reporting via `agy -p /usage --output-format json`.
+  - Status probes share a ~95-second cold-start budget across version checking and handshake, and preserve recognized sign-in diagnostics without exposing authorization URLs.
 
 ## Requirements
 
