@@ -50,15 +50,15 @@ Make sure plugins are enabled on your Paseo daemon (**Settings → Plugins → E
 ### Via Paseo App (Settings)
 
 1. Open Paseo and go to **Settings → Plugins → Plugin source**.
-2. Paste the repository URL or GitHub shorthand:
+2. Paste the repository URL or Git shorthand:
    - `https://github.com/robbin/paseo-antigravity`
-   - or `github:robbin/paseo-antigravity`
+   - or `git:robbin/paseo-antigravity`
 3. Click **Install plugin**.
 
 ### Via Paseo CLI
 
 ```bash
-paseo plugin install github:robbin/paseo-antigravity
+paseo plugin install git:robbin/paseo-antigravity
 ```
 
 To update later:
