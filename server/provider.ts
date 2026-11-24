@@ -28,7 +28,7 @@ export function provider(
     id: "better-paseo-antigravity",
     label: "Better Paseo Antigravity",
     icon: "icon.svg",
-    description: "复用官方 CLI 登录和配置；会话进度提示与可控取消。",
+    description: "复用官方 CLI 登录和配置；静默等待与可控取消。",
     command: ["agy", "acp", "--disable-telemetry"],
     docsUrl: "https://paseo.sh/docs/supported-providers/antigravity",
     installation: {

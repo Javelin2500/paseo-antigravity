@@ -19,7 +19,7 @@ const config: ProviderSessionConfig = {
 };
 async function setup(scenario = "", extra: Record<string, string> = {}) {
   const c = await provider({
-    limits: { startup: 2000, silent: 200, cancel: 80, hint: 50 },
+    limits: { startup: 2000, silent: 200, cancel: 80 },
     closeTimeoutMs: 150,
   }).connect({
     versions: [1],
@@ -116,12 +116,37 @@ for (const [text, reason] of [
             turn.error?.message.includes(reason),
           JSON.stringify(turn),
         );
+        assert.ok(!h.rows.slice(from).some((e) => e.type === "session.notice"));
       } finally {
         await h.c.close();
       }
     },
   );
 }
+test(
+  "SDK idle and long-running tool waits emit no notices or failures",
+  { timeout: 5000 },
+  async () => {
+    const h = await setup();
+    try {
+      await h.open();
+      await sleep(350);
+      const from = await h.prompt("tool");
+      await h.wait(
+        (e) => e.type === "timeline.item" && e.item.type === "tool_call",
+        from,
+      );
+      await sleep(350);
+      assert.ok(
+        !h.rows.some(
+          (e) => e.type === "session.notice" || e.type === "session.runtime_failed",
+        ),
+      );
+    } finally {
+      await h.c.close();
+    }
+  },
+);
 test(
   "SDK cancellation clears a tool with no terminal update",
   { timeout: 5000 },

@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { Watch } from "../server/watch.ts";
-const limits = { startup: 90, silent: 150, cancel: 5, hint: 30 };
+const limits = { startup: 90, silent: 150, cancel: 5 };
 const prompt = (w: Watch, id = 1, at = 0) =>
   w.observe(
     "out",
@@ -53,7 +53,7 @@ test("SDK terminalization clears ghost tools and ignores their late echoes", () 
   response(w);
   w.finishTool("old");
   tool(w, "in_progress", 4);
-  assert.equal(w.check(40).hints.length, 0);
+  assert.deepEqual(w.check(40), {});
   prompt(w, 2, 50);
   assert.ok(w.check(201).failure);
 });
@@ -98,7 +98,7 @@ test("load replay tools do not block later inactivity detection", () => {
   tool(w);
   w.observe("in", { jsonrpc: "2.0", id: 10, result: {} }, 2);
   tool(w, "in_progress", 3);
-  assert.equal(w.check(40).hints.length, 0);
+  assert.deepEqual(w.check(40), {});
   prompt(w, 1, 50);
   assert.ok(w.check(201).failure);
 });
@@ -108,7 +108,7 @@ test("SDK terminal event after cancellation clears ghost tools", () => {
   tool(w);
   response(w, 1, "cancelled", 2);
   w.finishTool("old"); // SDK terminalizeTransientItems emits the canceled tool.
-  assert.equal(w.check(40).hints.length, 0);
+  assert.deepEqual(w.check(40), {});
   prompt(w, 2, 50);
   assert.ok(w.check(201).failure);
 });
@@ -125,10 +125,16 @@ test("SDK terminal event after RPC error clears ghost tools", () => {
   prompt(w, 2, 50);
   assert.ok(w.check(201).failure);
 });
-test("one progress notice per turn, not per silence interval", () => {
+test("no progress notices across silence intervals or subsequent turns", () => {
   const w = new Watch(limits);
   prompt(w);
-  assert.equal(w.check(30).hints.length, 1);
+  assert.deepEqual(w.check(30), {});
   tool(w, "in_progress", 31);
-  assert.equal(w.check(62).hints.length, 0);
+  for (const at of [62, 1000, 10000]) assert.deepEqual(w.check(at), {});
+  tool(w, "completed", 10001);
+  response(w, 1, "end_turn", 10002);
+  for (const at of [10032, 20000]) assert.deepEqual(w.check(at), {});
+  prompt(w, 2, 20001);
+  assert.deepEqual(w.check(20031), {});
+  assert.match(w.check(20151).failure!, /无进展/);
 });

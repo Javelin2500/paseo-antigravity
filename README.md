@@ -10,8 +10,8 @@ Better Paseo Antigravity wraps the official `agy acp` binary using Paseo's ACP S
 
 ### What It Fixes
 
-- **Progress visibility without premature kills**
-  - Emits a single timeline warning notice per active turn after ~30 seconds without progress.
+- **Quiet waiting without premature kills**
+  - Waits silently during idle periods and quiet active turns, without inserting no-progress notices.
   - Distinguishes active foreground tools and pending permission approvals from genuine stalls—long-running tools and pending approvals are never killed solely for being quiet.
   - Closes genuinely stuck generation processes after 15 minutes of silence (only when no foreground tools or approvals are active) and never silently resends prompts.
 - **Reliable cancellation and process-group cleanup**
@@ -81,7 +81,7 @@ paseo plugin update better-paseo-antigravity
 - Does not create a custom OAuth flow, proxy, or credential store; sign in using the official `agy` CLI on the host.
 - Does not read private Antigravity SQLite databases, inboxes, or raw transcripts.
 - Never automatically resends prompts after a stall, disconnect, or cancellation.
-- Progress notices inserted into Paseo 0.17.3 timelines remain as historical records of that moment rather than a live-updating status bar.
+- Existing progress notices from older versions remain in timeline history; this version does not insert new no-progress notices.
 - See [VALIDATION.md](./VALIDATION.md) for the test matrix and verification notes.
 
 ## Development

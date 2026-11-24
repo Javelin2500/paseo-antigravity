@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { Watch } from "../server/watch.ts";
 import type { AcpStreamMessage } from "@getpaseo/plugin/server/acp";
-const limits = { startup: 90, silent: 150, cancel: 5, hint: 30 };
+const limits = { startup: 90, silent: 150, cancel: 5 };
 const out = (
   w: Watch,
   id: number,
@@ -53,27 +53,26 @@ const cancel = (w: Watch, at = 0) =>
     at,
   );
 
-test("silent prompt has a hint then a bounded failure", () => {
+test("silent prompt stays quiet until a bounded failure", () => {
   const w = new Watch(limits);
   out(w, 1);
-  assert.equal(w.check(30).hints.length, 1);
+  for (const at of [30, 60, 149]) assert.deepEqual(w.check(at), {});
   assert.match(w.check(150).failure!, /无进展/);
 });
 test("normal long tools are never killed for silence", () => {
   const w = new Watch(limits);
   out(w, 1);
   update(w, "a", "in_progress");
-  assert.equal(w.check(10000).failure, undefined);
-  assert.equal(w.check(10001).hints.length, 0);
+  for (const at of [31, 10000, 10001]) assert.deepEqual(w.check(at), {});
 });
-test("new post-response tool has its own progress hint", () => {
+test("new post-response tool stays quiet and remains cancellable", () => {
   const w = new Watch(limits);
   out(w, 1);
   update(w, "a", "in_progress");
   response(w, 1, 2);
   update(w, "a", "completed", 3);
   update(w, "b", "in_progress", 4);
-  assert.equal(w.check(34).hints.length, 1);
+  assert.deepEqual(w.check(34), {});
   cancel(w, 35);
   assert.match(w.check(40).failure!, /取消/);
 });

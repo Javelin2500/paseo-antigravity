@@ -2,6 +2,13 @@
 
 Environment: macOS, Paseo 0.17.3, official `agy` 1.5.15. This is a targeted follow-up to 0.2.1, not a new provider architecture.
 
+## Issue #1 follow-up (unreleased)
+
+- Removed both no-progress notices, their per-turn state and the 30-second hint timer setting. Idle sessions and quiet active turns now wait silently.
+- Startup, cancellation and 15-minute inactivity failure handling are unchanged; foreground tools and pending approvals still prevent silence-only termination. Cleanup failures and empty-result warnings remain visible.
+- `pnpm typecheck`, `git diff --check` and all 92 tests pass. Watch tests cover repeated quiet intervals, subsequent turns, idle sessions and long-running tools; real-SDK tests with a mock CLI verify quiet waiting and preserved concrete failure diagnostics.
+- Documentation and plugin descriptions now describe quiet waiting. Existing timeline notices are not removed. No installed plugin reload, live CLI run or UI verification was performed for this change.
+
 ## Issue #2 follow-up (unreleased)
 
 - Session-list `cwd` values are normalized before publication to Paseo, which validates the directory before `session.open`. No persistence, title, timestamp or transcript fields are rewritten.

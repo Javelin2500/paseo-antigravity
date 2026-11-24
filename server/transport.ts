@@ -237,7 +237,10 @@ export function createTransport(
       exitTimer.unref();
     }
   };
-  const interval = Math.max(10, Math.min(500, limits.hint, limits.cancel));
+  const interval = Math.max(
+    10,
+    Math.min(500, limits.startup, limits.silent, limits.cancel),
+  );
   let lastTick = Date.now();
   const timer = setInterval(() => {
     const now = Date.now();
@@ -245,7 +248,6 @@ export function createTransport(
       watch.resume(now, lastTick);
     lastTick = now;
     const result = watch.check(now);
-    for (const message of result.hints) hint(message);
     if (result.failure) fail(result.failure);
   }, interval);
   timer.unref();

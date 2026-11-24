@@ -4,13 +4,11 @@ export interface Limits {
   startup: number;
   silent: number;
   cancel: number;
-  hint: number;
 }
 export const defaults: Limits = {
   startup: 90_000,
   silent: 900_000,
   cancel: 5_000,
-  hint: 30_000,
 };
 type Id = string | number;
 interface Call {
@@ -29,11 +27,10 @@ interface Session {
   progress: number;
   cancelPrompts: Map<Id, number>;
   cancelTools: Map<string, number>;
-  noticed: boolean;
   replay: boolean;
   retiredTools: Set<string>;
 }
-export type WatchResult = { failure?: string; hints: string[] };
+export type WatchResult = { failure?: string };
 const record = (value: unknown): Record<string, unknown> =>
   value !== null && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -55,16 +52,12 @@ export class Watch {
         progress: now,
         cancelPrompts: new Map(),
         cancelTools: new Map(),
-        noticed: false,
         replay: false,
         retiredTools: new Set(),
       };
       this.sessions.set(id, s);
     }
     return s;
-  }
-  private hasTools(s: Session) {
-    return [...s.tools.values()].some((t) => !t.detached);
   }
   private retireTool(s: Session, id: string) {
     s.tools.delete(id);
@@ -103,7 +96,6 @@ export class Watch {
           this.session(sid, now).replay = true;
         if (m.method === "session/prompt" && sid) {
           const s = this.session(sid, now);
-          if (!s.prompts.size && !this.hasTools(s)) s.noticed = false;
           s.replay = false;
           s.prompts.add(id);
           s.progress = now;
@@ -186,7 +178,6 @@ export class Watch {
     }
   }
   check(now: number): WatchResult {
-    const hints: string[] = [];
     for (const call of this.calls.values()) {
       if (
         call.method !== "session/prompt" &&
@@ -194,7 +185,6 @@ export class Watch {
       )
         return {
           failure: `Antigravity 在 ${call.method} 阶段超时。请检查本机 CLI 和网络后刷新会话。`,
-          hints,
         };
     }
     for (const s of this.sessions.values()) {
@@ -206,26 +196,16 @@ export class Watch {
         return {
           failure:
             "Antigravity 未及时结束取消请求，已关闭本会话进程；未重发消息。",
-          hints,
         };
       const tools = [...s.tools.values()].some((t) => !t.detached);
       if (s.approvals.size > 0) continue;
       if (!s.prompts.size && !tools) continue;
-      if (!s.noticed && now - s.progress >= this.limits.hint) {
-        s.noticed = true;
-        hints.push(
-          tools
-            ? "Antigravity 仍有工具或子任务运行，暂未报告进展；不会仅因工具沉默而强杀。可点击停止。"
-            : "Antigravity 暂未报告新进展。可继续等待或点击停止；不会自动重发。",
-        );
-      }
       if (s.prompts.size && !tools && now - s.progress >= this.limits.silent)
         return {
           failure:
             "Antigravity 连续无进展且没有待审批或运行中的工具，已关闭旧进程。请刷新会话后继续；未重发消息。",
-          hints,
         };
     }
-    return { hints };
+    return {};
   }
 }
