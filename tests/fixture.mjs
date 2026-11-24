@@ -133,6 +133,42 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
   if (m.method === "session/prompt") {
     const text = m.params.prompt[0].text;
     pending = m.id;
+    if (text === "pending-only") {
+      update({ sessionUpdate: "tool_call", toolCallId: "pending-only", title: "pending", status: "pending", kind: "execute", rawInput: {} });
+      r({ stopReason: "max_tokens" });
+      pending = undefined;
+      return;
+    }
+    if (["content-shell", "content-mcp", "content-diff", "content-native", "content-cleared"].includes(text)) {
+      const shell = ["content-shell", "content-native", "content-cleared"].includes(text), diff = text === "content-diff";
+      update({
+        sessionUpdate: "tool_call",
+        toolCallId: "content-tool",
+        name: shell ? "run_command" : diff ? "edit_file" : "mcp_paseo_fixture",
+        title: "fixture",
+        kind: shell ? "execute" : diff ? "edit" : "other",
+        status: "in_progress",
+        rawInput: shell ? { CommandLine: "printf fixture" } : {},
+        ...(text === "content-native" ? { rawOutput: { output: "native", exit_code: 0 } } : {}),
+      });
+      update({
+        sessionUpdate: "tool_call_update",
+        toolCallId: "content-tool",
+        status: "in_progress",
+        content: [{ type: "content", content: { type: "text", text: "partial" } }],
+      });
+      update({
+        sessionUpdate: "tool_call_update",
+        toolCallId: "content-tool",
+        status: "completed",
+        content: text === "content-cleared" ? [] : diff
+          ? [{ type: "diff", path: "/tmp/fixture", oldText: "before", newText: "after" }]
+          : [{ type: "content", content: { type: "text", text: "完整结果\n" } }],
+      });
+      r({ stopReason: "end_turn" });
+      pending = undefined;
+      return;
+    }
     if (text === "background-first") {
       update({
         sessionUpdate: "tool_call",
@@ -160,6 +196,11 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
         r({ stopReason: "end_turn" });
         pending = undefined;
       }, 450);
+      return;
+    }
+    if (text === "empty") {
+      r({ stopReason: "end_turn" });
+      pending = undefined;
       return;
     }
     if (text === "silent" || text === "ignore-cancel") return;

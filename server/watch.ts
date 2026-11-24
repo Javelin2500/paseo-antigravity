@@ -41,7 +41,10 @@ export class Watch {
   private calls = new Map<Id, Call>();
   private sessions = new Map<string, Session>();
   private permissions = new Map<Id, string>();
-  constructor(readonly limits: Limits = defaults) {}
+  constructor(
+    readonly limits: Limits = defaults,
+    private readonly onToolResult: () => void = () => {},
+  ) {}
   private session(id: string, now: number): Session {
     let s = this.sessions.get(id);
     if (!s) {
@@ -172,8 +175,10 @@ export class Watch {
           (typeof input.CronExpression === "string" &&
             input.CronExpression.trim().length > 0),
       };
-      if (["completed", "failed", "cancelled"].includes(tool.status))
+      if (["completed", "failed", "cancelled"].includes(tool.status)) {
+        if (u.status === "completed" || u.status === "failed") this.onToolResult();
         this.retireTool(s, u.toolCallId);
+      }
       else s.tools.set(u.toolCallId, tool);
     }
   }

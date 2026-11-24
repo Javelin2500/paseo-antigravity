@@ -123,6 +123,67 @@ for (const [text, reason] of [
     },
   );
 }
+for (const kind of ["shell", "mcp", "diff", "native", "cleared"]) {
+  test(`SDK preserves content-only ${kind} results without empty-result warnings`, { timeout: 5000 }, async () => {
+    const h = await setup();
+    try {
+      await h.open();
+      const from = await h.prompt(`content-${kind}`);
+      await h.wait((e) => e.type === "session.turn" && e.state === "completed", from);
+      const result = h.rows.slice(from).find(
+        (e) => e.type === "timeline.item" && e.item.type === "tool_call" && e.item.status === "completed",
+      );
+      assert.ok(result?.type === "timeline.item" && result.item.type === "tool_call");
+      const detail = result.item.detail;
+      if (kind === "native" || kind === "cleared") {
+        assert.ok(detail.type === "shell");
+        assert.equal(detail.output, kind === "native" ? "native" : undefined);
+        assert.equal(detail.exitCode, kind === "native" ? 0 : undefined);
+      } else if (kind === "shell") {
+        assert.ok(detail.type === "shell");
+        assert.equal(detail.output, "完整结果\n");
+      } else if (kind === "mcp") {
+        assert.ok(detail.type === "unknown");
+        assert.equal(detail.output, "完整结果\n");
+      } else {
+        assert.ok(detail.type === "edit");
+        assert.equal(detail.oldString, "before");
+        assert.equal(detail.newString, "after");
+      }
+      assert.ok(!h.rows.slice(from).some(
+        (e) => e.type === "session.notice" && e.notice.id === "antigravity-empty",
+      ));
+      const next = await h.prompt("empty");
+      await h.wait((e) => e.type === "session.turn" && e.state === "completed", next);
+      assert.ok(h.rows.slice(next).some(
+        (e) => e.type === "session.notice" && e.notice.id === "antigravity-empty",
+      ), "a previous tool result must not hide a later empty turn");
+    } finally {
+      await h.c.close();
+    }
+  });
+}
+for (const replay of [false, true]) {
+  test(`synthetic tool completion cannot hide empty output (replay=${replay})`, { timeout: 6000 }, async () => {
+    const h = await setup();
+    try {
+      await h.open();
+      if (replay) {
+        const opened = h.rows.find(e => e.type === "session.opened");
+        assert.ok(opened?.type === "session.opened");
+        await h.c.send({ type: "session.close", sessionId: "s", requestId: "close" });
+        await h.wait(e => e.type === "session.closed");
+        const from = h.rows.length;
+        await h.c.send({ type: "session.open", sessionId: "s", requestId: "restore", config,
+          history: "replay", persistence: opened.persistence });
+        await h.wait(e => e.type === "session.ready", from);
+      }
+      const from = await h.prompt(replay ? "empty" : "pending-only");
+      await h.wait(e => e.type === "session.turn" && e.state === "completed", from);
+      assert.ok(h.rows.slice(from).some(e => e.type === "session.notice" && e.notice.id === "antigravity-empty"));
+    } finally { await h.c.close(); }
+  });
+}
 test(
   "SDK idle and long-running tool waits emit no notices or failures",
   { timeout: 5000 },

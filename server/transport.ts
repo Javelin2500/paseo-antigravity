@@ -4,6 +4,7 @@ import type { AcpStream, AcpStreamMessage } from "@getpaseo/plugin/server/acp";
 import type { ProviderLaunch } from "@getpaseo/plugin/server/provider";
 import { Watch, defaults, type Limits } from "./watch";
 import { stopProcessGroup } from "./process-group";
+import { ToolResultMapper } from "./tool-results";
 
 export interface Context {
   cwd: string;
@@ -56,6 +57,7 @@ export function createTransport(
   hint: (message: string) => void,
   limits: Limits = defaults,
   onFailure: (message: string) => void = () => {},
+  onToolResult: () => void = () => {},
 ): OwnedTransport {
   if (process.platform === "win32")
     throw new Error("当前进程管理实现仅支持 macOS / Linux。");
@@ -69,7 +71,8 @@ export function createTransport(
     detached: true,
     stdio: "pipe",
   });
-  const watch = new Watch(limits);
+  const watch = new Watch(limits, onToolResult);
+  const toolResults = new ToolResultMapper();
   let finish!: () => void;
   const finished = new Promise<void>((r) => {
     finish = r;
@@ -111,6 +114,7 @@ export function createTransport(
           /* consumer already cancelled */
         }
       }
+      toolResults.clear();
       clearInterval(timer);
       clearTimeout(exitTimer);
       clearTimeout(replayTimer);
@@ -136,7 +140,7 @@ export function createTransport(
   };
   const deliver = (frame: AcpStreamMessage) => {
     watch.observe("in", frame, Date.now());
-    controller.enqueue(frame);
+    controller.enqueue(toolResults.map(frame));
   };
   // In connector mode the SDK cannot see partial byte reads. Hold the native load response
   // until the same 200ms replay boundary is reached AND no incomplete frame remains.
@@ -146,7 +150,10 @@ export function createTransport(
     if (!loadResponse || closed) return;
     replayTimer = setTimeout(() => {
       if (closed || !loadResponse) return;
-      if (buffer.length || Date.now() - lastRead < REPLAY_QUIET_MS) {
+      if (
+        buffer.length || child.stdout.isPaused() ||
+        Date.now() - lastRead < REPLAY_QUIET_MS
+      ) {
         armReplay();
         return;
       }
@@ -263,7 +270,20 @@ export function createTransport(
   const stream: AcpStream = {
     readable: new ReadableStream<AcpStreamMessage>({
       async pull(c) {
-        child.stdout.resume();
+        // Drain already-decoded frames before resuming the pipe. Resuming on
+        // every read lets each consumed frame admit another whole pipe chunk,
+        // so a slow consumer can otherwise accumulate the producer's output.
+        if (
+          !closed &&
+          controller.desiredSize !== null &&
+          controller.desiredSize > 0
+        ) {
+          if (child.stdout.isPaused() && loadResponse) {
+            lastRead = Date.now();
+            armReplay();
+          }
+          child.stdout.resume();
+        }
         try {
           const next = await reader.read();
           if (next.done) c.close();

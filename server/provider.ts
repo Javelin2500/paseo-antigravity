@@ -138,6 +138,7 @@ export function provider(
       const listeners = new Set<(e: ProviderEvent) => void>();
       const transports = new Map<string, OwnedTransport>();
       const failures = new Map<string, string>();
+      const hasOutput = new Map<string, boolean>();
       let closed = false;
       let connectionClosing: Promise<void> | undefined;
       const emit = (e: ProviderEvent) => {
@@ -173,6 +174,10 @@ export function provider(
               if (context.sessionId && !failures.has(context.sessionId))
                 failures.set(context.sessionId, message);
             },
+            () => {
+              if (context.sessionId && hasOutput.has(context.sessionId))
+                hasOutput.set(context.sessionId, true);
+            },
           );
           if (context.sessionId) transports.set(context.sessionId, transport);
           owned.add(transport);
@@ -187,7 +192,6 @@ export function provider(
         await Promise.allSettled([...owned].map((t) => t.close()));
         throw e;
       }
-      const hasText = new Map<string, boolean>();
       const off = core.onEvent((e) => {
         // Paseo validates the import directory before sending session.open.
         if (e.type === "sessions")
@@ -212,23 +216,25 @@ export function provider(
             e = { ...e, error: { ...e.error, message: reason } };
         }
         if (e.type === "session.closed" || e.type === "session.runtime_failed")
-          hasText.delete(e.sessionId);
+          hasOutput.delete(e.sessionId);
         if (e.type === "session.closed") {
           transports.delete(e.sessionId);
           failures.delete(e.sessionId);
         }
         if (e.type === "session.turn" && e.state === "started")
-          hasText.set(e.sessionId, false);
+          hasOutput.set(e.sessionId, false);
+        // Real tool results are counted by Watch on live wire events, not SDK
+        // terminalization (which can synthesize completion for pending/history tools).
         if (
           e.type === "timeline.item" &&
-          e.item.type === "assistant_message" &&
-          e.item.text.trim()
+          hasOutput.has(e.sessionId) &&
+          e.item.type === "assistant_message" && e.item.text.trim()
         )
-          hasText.set(e.sessionId, true);
+          hasOutput.set(e.sessionId, true);
         if (
           e.type === "session.turn" &&
           e.state === "completed" &&
-          hasText.get(e.sessionId) === false
+          hasOutput.get(e.sessionId) === false
         )
           emit({
             type: "session.notice",
@@ -237,11 +243,11 @@ export function provider(
               id: "antigravity-empty",
               severity: "warning",
               title:
-                "本轮已结束，但没有返回正文。请检查工具结果或官方 CLI 的错误提示；消息没有自动重发。",
+                "本轮已结束，但没有返回正文或工具结果。请检查官方 CLI 的错误提示；消息没有自动重发。",
             },
           });
         if (e.type === "session.turn" && e.state !== "started") {
-          hasText.delete(e.sessionId);
+          hasOutput.delete(e.sessionId);
           // Completion of a foreground turn does not imply its background tools ended.
         }
         if (
@@ -303,7 +309,7 @@ export function provider(
               owned.clear();
               transports.clear();
               failures.clear();
-              hasText.clear();
+              hasOutput.clear();
             }
             // Do not wait indefinitely for an SDK operation stuck outside the transport.
             void graceful.catch(() => {});

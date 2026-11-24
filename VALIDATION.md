@@ -2,6 +2,21 @@
 
 Environment: macOS, Paseo 0.17.3, official `agy` 1.5.15. This is a targeted follow-up to 0.2.1, not a new provider architecture.
 
+## ACP fidelity follow-up (unreleased)
+
+- Tool text carried only in ACP `content` is exposed to the pinned SDK through `rawOutput` when no explicit `rawOutput` is present. Original content blocks, native structured output (including explicit null/empty values), and diffs are preserved. Snapshot updates replace text rather than accumulating duplicate content; shell details accept plain text output.
+- Two wire-level counterexamples failed before the mapping fix. Real-SDK tests verify shell and MCP text results and native diff presentation.
+- Empty-result warnings now require a completed turn with neither nonblank assistant text nor a live wire-confirmed completed/failed tool result. Watch excludes replay and retired tool echoes; SDK-synthesized terminal rows cannot suppress warnings. Pending calls and reasoning alone do not suppress warnings. Tests verify tool-only turns do not warn and a subsequent genuinely empty turn still does.
+- A slow-consumer test exposed read-ahead growth: every consumed frame resumed another pipe chunk even when decoded frames remained queued. The transport now drains decoded frames before resuming stdout. The regression sends 2,000 Unicode frames (roughly 14 MB), confirms the producer remains backpressured after 600 slow reads, then verifies all frames arrive unchanged and in order.
+- Additional pressure tests verify 10,000 fragmented mixed text/tool events and bounded cleanup when canceling an output flood. These are automated fixture tests, not a UI latency benchmark, RSS bound, or proof of indefinite memory stability.
+- Independent review identified and prompted fixes for replay completing while stdout was paused, synthetic tool terminalization hiding empty results, stale fallback text after content replacement, and later content overriding native output. Regression tests cover all four, including real-SDK history ghosts/pending tools and structured shell output preservation.
+- Replay quiet time does not advance to completion while stdout is paused; resumption starts a fresh quiet window. Output provenance is scoped by transport/session/tool and cleared on transport close. It stores only source markers, not payloads, and grows with distinct tools like SDK snapshots; no eviction is used because late updates must retain their native-output protection.
+- All 119 automated tests, `pnpm typecheck`, and `git diff --check` pass. Both independent reviewers reran the tests and approved the fixes; rollback probes also confirmed the new regression tests detect the original failures.
+- Explicit native `rawOutput` (including null/empty values) remains authoritative, even when content text also exists. Multiple text blocks are joined with a display newline; this is not a byte-for-byte stdout representation. Non-text blocks remain on the wire, but this fallback does not add SDK rendering support for images/audio/resources. ACP snapshot semantics are followed; agy-specific delta behavior has not been confirmed live.
+- Empty-result warnings reflect the evidence available when the turn completes. A tool result that arrives afterward can coexist with an earlier warning; the warning is not retracted. The plugin does not delay completion indefinitely waiting for possible late output.
+- Under an extremely stalled consumer, stdout backpressure can delay cancellation acknowledgments beyond the fixed timeout and trigger bounded process cleanup. Timeout protections remain enabled; this is not a guarantee of preserving a stalled runtime indefinitely.
+- No live account prompts, installed-plugin reload, mobile UI validation, or deployment were performed for this follow-up.
+
 ## Issue #1 follow-up (unreleased)
 
 - Removed both no-progress notices, their per-turn state and the 30-second hint timer setting. Idle sessions and quiet active turns now wait silently.

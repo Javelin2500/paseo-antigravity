@@ -43,7 +43,7 @@ function mapNativeDetail(
       return {
         type: "shell",
         command: input.CommandLine,
-        output: output?.output,
+        output: typeof call.output === "string" ? call.output : output?.output,
         exitCode: output?.exit_code,
       };
     }
