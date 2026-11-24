@@ -1,14 +1,25 @@
 # Better Paseo Antigravity
 
-A [Paseo](https://paseo.sh) plugin that provides a more reliable ACP provider and usage source (`better-paseo-antigravity`) for Google's official Antigravity CLI (`agy acp`).
+A stability-first [Paseo](https://paseo.sh) plugin providing a hardened ACP provider and official usage quota source (`better-paseo-antigravity`) for Google's official Antigravity CLI (`agy acp`).
 
-## Why Better Paseo Antigravity?
+## Built for Long-Session Reliability
 
-Paseo's built-in Antigravity provider can run into reliability and ergonomics issues during real-world sessions—such as silent stalls with no feedback, hung cancellation requests, orphaned child processes, truncated large history replays, and swallowed error messages.
+When running real coding agents for extended sessions, extra UI gimmicks matter far less than whether a session stays alive, stops cleanly when asked, and recovers cleanly from sleep or reconnects.
 
-Better Paseo Antigravity wraps the official `agy acp` binary using Paseo's ACP SDK while fixing these transport, lifecycle, and state-tracking issues without altering your CLI login, credentials, or environment.
+Paseo's built-in Antigravity provider can run into reliability issues during real-world sessions—such as premature stalls, hung cancellation requests, orphaned child processes, truncated large history replays, and swallowed error messages. Better Paseo Antigravity wraps the official `agy acp` binary on top of Paseo's official ACP SDK to fix these transport, lifecycle, and state-tracking issues without altering your CLI login, reading private session databases, or diverging from the official protocol.
 
-### What It Fixes
+### Stability at a Glance
+
+| Failure mode | How Better Paseo Antigravity handles it |
+| --- | --- |
+| Silent stalls vs. long-running work | Waits silently without no-progress notices. Active foreground tools and pending approvals are never killed solely for silence; genuinely stuck generation with no active tools or approvals is closed after 15 minutes. |
+| Hung stop/cancel & orphaned processes | Enforces a 5-second fallback deadline per canceled target, followed by time-bounded graceful ACP close and detached POSIX process-group cleanup (`SIGTERM` → 1s grace → `SIGKILL`). |
+| Cancel races & stale tool tracking | Ignores idle cancels, isolates `session/load` replay from live tracking, scopes cancel deadlines per target, and retires tools only on explicit tool-terminal events. |
+| Swallowed root-cause errors | Records transport, watchdog, exit-code, and signal failure details before closing the stream so generic SDK errors never hide the real cause. |
+| Broken large history replay | Uses `agy >= 1.5.15`'s protocol-ordered `session/load` boundary with fragmented UTF-8 decoding and backpressure safety; live updates appear immediately after restore. |
+| Laptop sleep/wake false timeouts | Detects suspend and clock jumps (>5s timer gap), rebasing pre-sleep operations while preserving fresh post-wake deadlines. |
+
+### Engineering Details
 
 - **Quiet waiting without premature kills**
   - Waits silently during idle periods and quiet active turns, without inserting no-progress notices.

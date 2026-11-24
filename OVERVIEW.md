@@ -1,23 +1,32 @@
 # Better Paseo Antigravity
 
-Better Paseo Antigravity runs the installed and signed-in official `agy acp` CLI inside Paseo with quiet waiting, bounded cancellation, process-group cleanup, byte-aware history replay, and official CLI usage quota reporting.
+Built for long-session reliability, not feature bloat. Better Paseo Antigravity wraps the official, locally signed-in `agy acp` CLI through Paseo's ACP SDK to keep multi-hour agent runs stable—without modifying your CLI login, touching private session databases, or reinventing the protocol.
+
+## Reliability first
+
+| Common failure mode | How Better Paseo Antigravity handles it |
+| --- | --- |
+| Long-running tools or approvals killed for silence | Waits silently during idle periods and quiet turns without inserting no-progress notices. Active foreground tools and pending approvals are never terminated solely for silence; genuinely stuck turns with no active tools or approvals are closed after 15 minutes of no progress. |
+| Hung stop/cancel requests and orphaned processes | Targets only the in-flight requests and foreground tools active at cancel time, each with a 5-second fallback deadline. Shutdown runs a time-bounded graceful ACP close followed by detached POSIX process-group cleanup. Later requests never inherit an old cancel deadline. |
+| Swallowed root-cause errors on disconnect | Captures the underlying transport, watchdog, exit-code, or signal diagnostics before closing the stream so generic SDK errors do not hide the real cause. |
+| Truncated or stalled large history replays | Follows the native `session/load` boundary in `agy >= 1.5.15`, preserving wire order, fragmented UTF-8 decoding, and backpressure without waiting for stream silence. Live updates appear immediately after restore without requiring a new prompt. |
+| False timeouts after laptop sleep/wake | Detects host suspend and clock jumps (>5s timer gap), rebasing pre-sleep work (including work started in the final timer slice before suspend) while keeping fresh post-wake deadlines intact. |
+| Background tools cleared when a turn finishes | Retires tool state only on explicit tool-terminal events so background tools preserved for follow-up turns keep running. |
 
 ## How it works
 
-Select Better Paseo Antigravity when creating a new agent. Existing sessions created with the built-in Antigravity provider are not migrated. Models, thinking options, slash commands, skills, tool approvals, and session resume continue to use the Paseo ACP SDK. Full access mode is available as an opt-in option and is not enabled by default.
-
-Idle sessions and quiet active turns wait silently without no-progress notices. Timeout and failure diagnostics are preserved. Long-running foreground tools and pending permission approvals are not terminated solely for silence. If a turn has no active foreground tools or pending approvals and makes no progress for 15 minutes, the plugin closes the stuck process. When you stop a turn, cancellation targets the requests and foreground tools present at that moment, each with a 5-second fallback deadline. Later requests do not inherit an old target's deadline. On shutdown, the plugin attempts a time-bounded graceful ACP close and then cleans up the detached process group. Prompts are never resent automatically.
-
-Session history follows the native `session/load` response boundary provided by agy 1.5.15 and later. The transport preserves complete UTF-8 frames and wire order without waiting for silence; live updates after restoration do not require a new prompt to become visible. Tool state is retired on explicit tool-terminal events, not merely because a foreground turn completed; background tools preserved for a follow-up keep running. Sleep recovery includes work started in the last timer slice before suspension while preserving fresh post-wake deadlines.
+Select Better Paseo Antigravity when creating a new agent. Existing sessions created with the built-in Antigravity provider are not migrated. Models, thinking options, slash commands, skills, tool approvals, and session resume continue to use the Paseo ACP SDK. Full access mode is opt-in and disabled by default. Prompts are never resent automatically after a stall, disconnect, or cancellation.
 
 ## Setup and requirements
 
-Requires macOS or Linux, Paseo 0.17.3, and the official `agy` CLI version 1.5.15 or later already installed and signed in on the daemon host.
+- **OS**: macOS or Linux (Windows is unsupported due to POSIX process-group signaling).
+- **Paseo**: `>=0.17.3 <0.18.0`.
+- **Antigravity CLI**: Official `agy` `>=1.5.15` installed and signed in on the daemon host (`1.5.16` recommended for its upstream subagent approval/question forwarding fix).
 
-Provider status checks verify the `agy` CLI version and perform an ACP handshake within a shared ~95-second cold-start budget. Recognized sign-in failures are reported without printing authorization URLs. Account eligibility and model access are still verified when opening a session. Usage quotas are queried through `agy -p /usage --output-format json` using the existing CLI login and environment.
+Provider status checks verify the `agy` CLI version and perform an ACP handshake within a shared ~95-second cold-start budget. Recognized sign-in failures are reported without printing authorization URLs. Account eligibility and model access are still verified when opening a session. Usage quotas are queried through `agy -p /usage --output-format json` using your existing CLI login and environment.
 
-Version 1.5.16 is recommended for its subagent approval/question forwarding fix. Permission choices use the Paseo ACP SDK; complex forms and free-text subagent answers remain unverified. Full access automatically approves eligible tool requests, not arbitrary questions. Command names without classification metadata remain unclassified rather than being assumed to be skills.
+Permission choices use the Paseo ACP SDK; complex forms and free-text subagent answers remain unverified. Full access automatically approves eligible tool requests, not arbitrary questions. Command names without classification metadata remain unclassified rather than being assumed to be skills.
 
 ## Privacy and boundaries
 
-Prompts, tool outputs, and usage queries are sent to Google's Antigravity backend through the local official `agy` CLI using your existing sign-in. The plugin does not create a separate OAuth flow, account directory, or network proxy. It does not copy or store credentials, and it does not overwrite `GEMINI_HOME`, `SSH_*`, or `BROWSER`. It does not read private native session SQLite databases or transcripts. Progress notices inserted by older versions remain in timeline history. Account eligibility, rate limits, and network failures cannot be bypassed by the plugin.
+Prompts, tool outputs, and usage queries go to Google's Antigravity backend through the local official `agy` CLI using your existing sign-in. The plugin does not create a separate OAuth flow, account directory, or network proxy. It does not copy or store credentials, and it does not overwrite `GEMINI_HOME`, `SSH_*`, or `BROWSER`. It does not read private native session SQLite databases or transcripts. Progress notices inserted by older versions remain in timeline history. Account eligibility, rate limits, and network failures cannot be bypassed by the plugin.
