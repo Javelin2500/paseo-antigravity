@@ -52,9 +52,14 @@ test("installation inspect preserves custom prefix without acp", async () => {
   assert.equal(result.status, "installed");
   if (result.status === "installed") assert.equal(result.version, "1.5.15");
 });
-test("Plus usage source discovers account and parses official usage format", async () => {
+test("Plugin usage source discovers account and parses official usage format", async () => {
   const s = new Usage().registration();
-  assert.equal(s.provider, "antigravity-plus");
+  const p = provider();
+  assert.equal(p.id, "better-paseo-antigravity");
+  assert.equal(p.label, "Better Paseo Antigravity");
+  assert.equal(s.id, p.id);
+  assert.equal(s.provider, p.id);
+  assert.equal(s.label, p.label);
   const accounts = await s.discover({ kind: "global", launch: launch() });
   assert.equal(accounts.length, 1);
   const result = await s.fetch(accounts[0]!.input);
@@ -63,10 +68,19 @@ test("Plus usage source discovers account and parses official usage format", asy
     assert.equal(result.windows.length, 1);
     assert.equal(result.windows[0]?.usedPct, 25);
   }
+  assert.equal(
+    (await s.discover({
+      kind: "session",
+      provider: p.id,
+      env: {},
+      launch: launch(),
+    })).length,
+    1,
+  );
   assert.deepEqual(
     await s.discover({
       kind: "session",
-      provider: "other",
+      provider: "antigravity-plus",
       env: {},
       launch: launch(),
     }),

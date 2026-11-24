@@ -24,8 +24,8 @@ export function provider(
   } = {},
 ): ProviderRegistration {
   return {
-    id: "antigravity-plus",
-    label: "Antigravity Plus",
+    id: "better-paseo-antigravity",
+    label: "Better Paseo Antigravity",
     icon: "icon.svg",
     description: "复用官方 CLI 登录和配置；会话进度提示与可控取消。",
     command: ["agy", "acp", "--disable-telemetry"],
@@ -87,8 +87,8 @@ export function provider(
         const probes = new Set<OwnedTransport>();
         try {
           const probe = runAcpProvider({
-            id: "antigravity-plus",
-            label: "Antigravity Plus",
+            id: "better-paseo-antigravity",
+            label: "Better Paseo Antigravity",
             acpOptions: { startupTimeoutMs: remaining() },
             connector: () => {
               const t = createTransport(
@@ -143,8 +143,8 @@ export function provider(
         if (!closed) for (const l of listeners) l(e);
       };
       const shim = runAcpProvider({
-        id: "antigravity-plus",
-        label: "Antigravity Plus",
+        id: "better-paseo-antigravity",
+        label: "Better Paseo Antigravity",
         acpOptions: options,
         transformers: [vendor],
         connector: () => {

@@ -90,13 +90,13 @@ export class Usage {
 
   registration(): UsageSourceRegistration {
     return {
-      id: "antigravity-plus",
-      label: "Antigravity Plus",
+      id: "better-paseo-antigravity",
+      label: "Better Paseo Antigravity",
       icon: "icon.svg",
       input,
-      provider: "antigravity-plus",
+      provider: "better-paseo-antigravity",
       discover: async (scope) => {
-        if (scope.kind === "session" && scope.provider !== "antigravity-plus")
+        if (scope.kind === "session" && scope.provider !== "better-paseo-antigravity")
           return [];
         if (!scope.launch) return [];
         const launch = scope.launch;

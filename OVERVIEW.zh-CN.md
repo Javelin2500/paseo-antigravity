@@ -1,10 +1,10 @@
-# Antigravity Plus
+# Better Paseo Antigravity
 
-Antigravity Plus 在 Paseo 中运行本机已安装并登录的官方 `agy acp` CLI，提供进度提示、有界取消、进程组清理、字节级历史回放保护以及官方 CLI 用量配额上报。
+Better Paseo Antigravity 在 Paseo 中运行本机已安装并登录的官方 `agy acp` CLI，提供进度提示、有界取消、进程组清理、字节级历史回放保护以及官方 CLI 用量配额上报。
 
 ## 工作方式
 
-新建 Agent 时选择 Antigravity Plus 即可使用。不会自动迁移由 Paseo 内置 Antigravity Provider 创建的既有会话。模型选择、思考档位、斜杠命令、技能、工具审批与会话恢复均继续基于 Paseo ACP SDK 工作。Full access 模式为可选模式，默认不开启。
+新建 Agent 时选择 Better Paseo Antigravity 即可使用。不会自动迁移由 Paseo 内置 Antigravity Provider 创建的既有会话。模型选择、思考档位、斜杠命令、技能、工具审批与会话恢复均继续基于 Paseo ACP SDK 工作。Full access 模式为可选模式，默认不开启。
 
 在活跃轮次中如果约 30 秒没有进展，插件会向时间线插入一条警告提示。长时间运行的前景工具与待处理的权限审批不会仅因静默而被中止。仅当轮次中没有活跃前景工具或待处理审批、且连续 15 分钟无进展时，插件才会关闭卡死的进程。手动停止轮次时，取消操作会针对当前在途请求和前景工具分别设置 5 秒兜底时限，后续新请求不会继承旧目标的超时。关闭时插件会先尝试有界的优雅 ACP 关闭，再清理独立进程组。插件绝不会自动重发 prompt。
 

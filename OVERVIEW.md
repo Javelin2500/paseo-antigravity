@@ -1,10 +1,10 @@
-# Antigravity Plus
+# Better Paseo Antigravity
 
-Antigravity Plus runs the installed and signed-in official `agy acp` CLI inside Paseo with progress notices, bounded cancellation, process-group cleanup, byte-aware history replay, and official CLI usage quota reporting.
+Better Paseo Antigravity runs the installed and signed-in official `agy acp` CLI inside Paseo with progress notices, bounded cancellation, process-group cleanup, byte-aware history replay, and official CLI usage quota reporting.
 
 ## How it works
 
-Select Antigravity Plus when creating a new agent. Existing sessions created with the built-in Antigravity provider are not migrated. Models, thinking options, slash commands, skills, tool approvals, and session resume continue to use the Paseo ACP SDK. Full access mode is available as an opt-in option and is not enabled by default.
+Select Better Paseo Antigravity when creating a new agent. Existing sessions created with the built-in Antigravity provider are not migrated. Models, thinking options, slash commands, skills, tool approvals, and session resume continue to use the Paseo ACP SDK. Full access mode is available as an opt-in option and is not enabled by default.
 
 After roughly 30 seconds without progress during an active turn, the plugin inserts one warning notice into the timeline. Long-running foreground tools and pending permission approvals are not terminated solely for silence. If a turn has no active foreground tools or pending approvals and makes no progress for 15 minutes, the plugin closes the stuck process. When you stop a turn, cancellation targets the requests and foreground tools present at that moment, each with a 5-second fallback deadline. Later requests do not inherit an old target's deadline. On shutdown, the plugin attempts a time-bounded graceful ACP close and then cleans up the detached process group. Prompts are never resent automatically.
 

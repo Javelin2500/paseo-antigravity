@@ -1,12 +1,12 @@
-# Antigravity Plus
+# Better Paseo Antigravity
 
-A [Paseo](https://paseo.sh) plugin that provides a more reliable ACP provider and usage source (`antigravity-plus`) for Google's official Antigravity CLI (`agy acp`).
+A [Paseo](https://paseo.sh) plugin that provides a more reliable ACP provider and usage source (`better-paseo-antigravity`) for Google's official Antigravity CLI (`agy acp`).
 
-## Why Antigravity Plus?
+## Why Better Paseo Antigravity?
 
 Paseo's built-in Antigravity provider can run into reliability and ergonomics issues during real-world sessions—such as silent stalls with no feedback, hung cancellation requests, orphaned child processes, truncated large history replays, and swallowed error messages.
 
-Antigravity Plus wraps the official `agy acp` binary using Paseo's ACP SDK while fixing these transport, lifecycle, and state-tracking issues without altering your CLI login, credentials, or environment.
+Better Paseo Antigravity wraps the official `agy acp` binary using Paseo's ACP SDK while fixing these transport, lifecycle, and state-tracking issues without altering your CLI login, credentials, or environment.
 
 ### What It Fixes
 
@@ -67,12 +67,12 @@ paseo plugin install git:robbin/paseo-antigravity
 To update later:
 
 ```bash
-paseo plugin update antigravity-plus
+paseo plugin update better-paseo-antigravity
 ```
 
 ## Usage
 
-1. Create a new agent in Paseo and select **Antigravity Plus** as the provider.
+1. Create a new agent in Paseo and select **Better Paseo Antigravity** as the provider.
 2. Choose your model, thinking level, and permission mode (`Full access` is available as an opt-in mode and is not enabled by default).
 3. Existing sessions created with Paseo's built-in Antigravity provider are not automatically migrated.
 
