@@ -11,14 +11,33 @@ export const defaults: Limits = {
   cancel: 5_000,
 };
 type Id = string | number;
+// Scalar metadata only; completed/failed count foreground tools, results includes detached tools.
+interface Turn {
+  turnId: string;
+  nativeSessionId?: string;
+  startedAt: number;
+  responseAt?: number;
+  stopReason?: string;
+  errorCode?: number;
+  canceled: boolean;
+  replaced: boolean;
+  text: boolean;
+  trailingText: boolean;
+  results: number;
+  completed: number;
+  failed: number;
+}
 interface Call {
   method: string;
   session?: string;
   at: number;
+  turn?: Turn;
 }
 interface Tool {
   status: string;
   detached: boolean;
+  name?: string;
+  turn?: Turn;
 }
 interface Session {
   prompts: Set<Id>;
@@ -41,10 +60,12 @@ export class Watch {
   private calls = new Map<Id, Call>();
   private sessions = new Map<string, Session>();
   private permissions = new Map<Id, string>();
-  constructor(
-    readonly limits: Limits = defaults,
-    private readonly onToolResult: () => void = () => {},
-  ) {}
+  turn?: Turn;
+  constructor(readonly limits: Limits = defaults) {}
+  startTurn(turnId: string, now = Date.now()) {
+    this.turn = { turnId, startedAt: now, canceled: false, replaced: false,
+      text: false, trailingText: false, results: 0, completed: 0, failed: 0 };
+  }
   private session(id: string, now: number): Session {
     let s = this.sessions.get(id);
     if (!s) {
@@ -94,10 +115,12 @@ export class Watch {
     const sid = typeof p.sessionId === "string" ? p.sessionId : undefined;
     if (direction === "out") {
       if (typeof m.method === "string" && id !== undefined) {
-        this.calls.set(id, { method: m.method, session: sid, at: now });
+        this.calls.set(id, { method: m.method, session: sid, at: now,
+          turn: m.method === "session/prompt" ? this.turn : undefined });
         if (m.method === "session/load" && sid)
           this.session(sid, now).replay = true;
         if (m.method === "session/prompt" && sid) {
+          if (this.turn) this.turn.nativeSessionId = sid;
           const s = this.session(sid, now);
           s.replay = false;
           s.prompts.add(id);
@@ -105,6 +128,7 @@ export class Watch {
         }
       }
       if (m.method === "session/cancel" && sid) {
+        if (this.turn?.nativeSessionId === sid) this.turn.canceled = true;
         const s = this.session(sid, now);
         // Snapshot only the targets that exist now. Repeated Stop keeps each old
         // target's first deadline; newly targeted work receives its own deadline.
@@ -135,6 +159,16 @@ export class Watch {
         s.prompts.delete(id);
         s.progress = now;
         s.cancelPrompts.delete(id);
+        if (call.turn) {
+          const t = call.turn, reason = record(m.result).stopReason;
+          t.responseAt = now;
+          t.stopReason = ["end_turn", "max_tokens", "max_turn_requests", "refusal", "cancelled"].includes(String(reason))
+            ? String(reason) : "unknown";
+          const code = record(m.error).code;
+          if (typeof code === "number") t.errorCode = code;
+          console.log("[antigravity:prompt-end]", JSON.stringify({ ...t,
+            openTools: [...s.tools.values()].filter(t => !t.detached).length }));
+        }
         // Tool and approval completion comes from explicit wire/SDK events, not
         // from a prompt's stop reason, which may coexist with other active work.
       }
@@ -148,11 +182,16 @@ export class Watch {
     if (m.method !== "session/update" || !sid) return;
     const u = record(p.update),
       s = this.session(sid, now);
-    if (
-      s.replay ||
-      (typeof u.toolCallId === "string" && s.retiredTools.has(u.toolCallId))
-    )
+    if (s.replay) {
+      if (typeof u.toolCallId === "string") this.retireTool(s, u.toolCallId);
       return;
+    }
+    if (typeof u.toolCallId === "string" && s.retiredTools.has(u.toolCallId)) return;
+    const turn = this.turn?.nativeSessionId === sid ? this.turn : undefined,
+      content = record(u.content);
+    if (turn && u.sessionUpdate === "agent_message_chunk" &&
+        content.type === "text" && typeof content.text === "string" && content.text.trim())
+      turn.text = turn.trailingText = true;
     if (
       [
         "agent_message_chunk",
@@ -168,17 +207,26 @@ export class Watch {
     if (typeof u.toolCallId === "string") {
       const old = s.tools.get(u.toolCallId),
         input = record(u.rawInput);
-      const tool = {
+      const name = typeof u.name === "string" ? u.name : old?.name;
+      const tool: Tool = {
+        name,
+        turn: old ? old.turn : turn, // Carry-over tools retain their original owner.
         status:
           typeof u.status === "string" ? u.status : (old?.status ?? "pending"),
         detached:
           old?.detached === true ||
           input.IsDaemon === true ||
-          (typeof input.CronExpression === "string" &&
+          (name === "schedule" && typeof input.CronExpression === "string" &&
             input.CronExpression.trim().length > 0),
       };
       if (["completed", "failed", "cancelled"].includes(tool.status)) {
-        if (u.status === "completed" || u.status === "failed") this.onToolResult();
+        if (turn && tool.turn === turn && (u.status === "completed" || u.status === "failed")) {
+          turn.results++;
+          if (!tool.detached) {
+            turn[u.status]++;
+            turn.trailingText = false;
+          }
+        }
         this.retireTool(s, u.toolCallId);
       }
       else s.tools.set(u.toolCallId, tool);

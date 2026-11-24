@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { setTimeout as sleep } from "node:timers/promises";
 import { provider } from "../server/provider.ts";
+import { options } from "../server/vendor.ts";
 import type {
   ProviderEvent,
   ProviderSessionConfig,
@@ -83,6 +84,71 @@ async function setup(scenario = "", extra: Record<string, string> = {}) {
     return from;
   };
   return { c, rows, wait, open, prompt };
+}
+for (const mode of ["parallel", "opening", "interleaved", "final", "duplicate", "failed",
+  "daemon", "schedule", "deferred", "deferred-final"]) {
+  test(`turn-end notice and content-free diagnostics: ${mode}`, {timeout:5000}, async t => {
+    // Scale only the SDK's two-minute deferred quiet window, not production policy.
+    const defer = options.deferTurnOnRunningTools!;
+    const quiet = defer.quietLimitMs;
+    defer.quietLimitMs = 60;
+    t.after(() => { defer.quietLimitMs = quiet; });
+    const log = t.mock.method(console, "log", () => {});
+    const h = await setup();
+    try {
+      await h.open();
+      const from = await h.prompt(`turn-${mode}`);
+      await h.wait(e => e.type === "session.turn" && e.state === "completed", from);
+      const rows = h.rows.slice(from), notices = rows.filter(e => e.type === "session.notice");
+      const expected = ["parallel", "opening", "interleaved", "failed", "deferred"].includes(mode);
+      assert.equal(notices.length, expected ? 1 : 0);
+      if (expected) {
+        const e = notices[0];
+        assert.ok(e.type === "session.notice");
+        assert.equal(e.notice.id, "antigravity-tool-only");
+        assert.equal(e.notice.severity, "info");
+        assert.equal(e.notice.title.includes("失败"), mode === "failed");
+        assert.ok(rows.indexOf(e) < rows.findIndex(e => e.type === "session.turn" && e.state === "completed"));
+      }
+      const records = log.mock.calls.map(c => c.arguments);
+      assert.deepEqual(records.map(r => r[0]), ["[antigravity:prompt-end]", "[antigravity:turn-end]"]);
+      const end = JSON.parse(records[1][1] as string);
+      assert.equal(end.state, "completed");
+      assert.equal(end.stopReason, "end_turn");
+      assert.equal(end.results, 2);
+      assert.equal(end.failed, mode === "failed" ? 2 : 0);
+      assert.equal(end.completed, ["failed", "daemon", "schedule"].includes(mode) ? 0 : 2);
+      assert.ok(!JSON.stringify(records).includes("PRIVATE_"));
+      assert.ok(!JSON.stringify(records).includes(`turn-${mode}`));
+    } finally { await h.c.close(); }
+  });
+}
+for (const reason of ["cancelled", "end_turn"])
+for (const action of ["replace", "interrupt", "deferred-replace"]) {
+  test(`turn-end suppresses notices on ${action} (${reason})`, {timeout:5000}, async t => {
+    const log = t.mock.method(console, "log", () => {});
+    const dir = await mkdtemp(join(tmpdir(), "agy-prompts-")), file = join(dir, "count");
+    const h = await setup("", {CANCEL_REASON:reason, PROMPTS_FILE:file});
+    try {
+      await h.open();
+      const from = await h.prompt(action === "deferred-replace" ? "turn-deferred-hold" : "turn-hold");
+      const started = await h.wait(e => e.type === "session.turn" && e.state === "started", from);
+      assert.ok(started.type === "session.turn");
+      await h.wait(e => e.type === "timeline.item" && e.item.type === "tool_call" &&
+        e.item.callId === "a" && e.item.status === "completed", from);
+      if (action === "interrupt")
+        await h.c.send({type:"session.interrupt",sessionId:"s",requestId:"stop"});
+      else await h.prompt(action === "deferred-replace" ? "finish-carry" : "hello");
+      await h.wait(e => e.type === "session.turn" && e.state !== "started" && e.turnId === started.turnId, from);
+      if (action !== "interrupt")
+        await h.wait(e => e.type === "session.turn" && e.state === "completed" && e.turnId !== started.turnId, from);
+      assert.equal(h.rows.slice(from).filter(e => e.type === "session.notice").length, 0);
+      assert.equal((await readFile(file, "utf8")).trim().split("\n").length, action === "interrupt" ? 1 : 2);
+      const end = JSON.parse(log.mock.calls.find(c => c.arguments[0] === "[antigravity:turn-end]")!.arguments[1] as string);
+      assert.equal(end.replaced, action !== "interrupt");
+      assert.equal(end.canceled, action !== "deferred-replace");
+    } finally { await h.c.close(); await rm(dir, {recursive:true,force:true}); }
+  });
 }
 for (const [text, reason] of [
   ["bad", "非 ACP"],

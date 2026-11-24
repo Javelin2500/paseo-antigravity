@@ -17,7 +17,7 @@ export interface OwnedTransport {
   close(): Promise<void>;
   finished: Promise<void>;
   pid: number | undefined;
-  finishTool(id: string): void;
+  watch: Watch;
 }
 const MAX_FRAME = 16 * 1024 * 1024;
 function parse(line: string): AcpStreamMessage {
@@ -57,7 +57,6 @@ export function createTransport(
   hint: (message: string) => void,
   limits: Limits = defaults,
   onFailure: (message: string) => void = () => {},
-  onToolResult: () => void = () => {},
 ): OwnedTransport {
   if (process.platform === "win32")
     throw new Error("当前进程管理实现仅支持 macOS / Linux。");
@@ -71,7 +70,7 @@ export function createTransport(
     detached: true,
     stdio: "pipe",
   });
-  const watch = new Watch(limits, onToolResult);
+  const watch = new Watch(limits);
   const toolResults = new ToolResultMapper();
   const loadBoundary = new LoadBoundary();
   let boundaryPending = false;
@@ -333,6 +332,6 @@ export function createTransport(
     close,
     finished,
     pid: child.pid,
-    finishTool: (id) => watch.finishTool(id),
+    watch,
   };
 }

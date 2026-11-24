@@ -1,5 +1,13 @@
 # Better Paseo Antigravity validation
 
+## 0.3.2 release — turn-end notices and diagnostics
+
+- Completed foreground-tool turns without subsequent nonblank assistant text emit one `antigravity-tool-only` info notice before the terminal turn event; failed tools are described as failures. Truly empty turns retain `antigravity-empty`. Canceled/replaced turns, detached tools, replay/retired echoes, synthetic completions and carry-over results cannot trigger the new notice.
+- Watch tracks text and real tool terminals in wire order; detached classification matches the SDK's `IsDaemon` / named `schedule` policy. `[antigravity:prompt-end]` and `[antigravity:turn-end]` log single-line JSON metadata only: IDs, timestamps, state/allowlisted stop reason or numeric error code, flags and counts. No prompt, assistant/reasoning text, tool payload, path or raw error message is logged.
+- Added 24 focused unit/real-SDK tests for parallel tools, opening/inter-tool/final text, same-chunk frames, deferred settlement, failed/detached tools, cancellation/replacement (including `end_turn` cancel replies), ownership/replay filtering and metadata privacy. Deferred tests scale only the SDK quiet window; replacement tests verify prompt counts.
+- `pnpm typecheck`, all 169 tests (including the unchanged 145-test baseline) and `git diff --check` pass. Independent Neon and DeepSeek read-only reviews found no blocking defects; both independently passed these checks. No auto-retry, waiting notices or 15-minute watchdog changes.
+- Release scope is Git source, the `v0.3.2` tag and GitHub Release. No live-account/UI validation, plugin reload or daemon restart was performed.
+
 ## 0.3.0 release
 
 - Requires official agy >=1.5.15 and Paseo >=0.17.3 <0.18.0 on macOS/Linux.

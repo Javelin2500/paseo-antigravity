@@ -127,7 +127,6 @@ export function provider(
       const listeners = new Set<(e: ProviderEvent) => void>();
       const transports = new Map<string, OwnedTransport>();
       const failures = new Map<string, string>();
-      const hasOutput = new Map<string, boolean>();
       let closed = false;
       let connectionClosing: Promise<void> | undefined;
       const emit = (e: ProviderEvent) => {
@@ -162,10 +161,6 @@ export function provider(
             (message) => {
               if (context.sessionId && !failures.has(context.sessionId))
                 failures.set(context.sessionId, message);
-            },
-            () => {
-              if (context.sessionId && hasOutput.has(context.sessionId))
-                hasOutput.set(context.sessionId, true);
             },
           );
           if (context.sessionId) transports.set(context.sessionId, transport);
@@ -204,47 +199,40 @@ export function provider(
           )
             e = { ...e, error: { ...e.error, message: reason } };
         }
-        if (e.type === "session.closed" || e.type === "session.runtime_failed")
-          hasOutput.delete(e.sessionId);
         if (e.type === "session.closed") {
           transports.delete(e.sessionId);
           failures.delete(e.sessionId);
         }
-        if (e.type === "session.turn" && e.state === "started")
-          hasOutput.set(e.sessionId, false);
-        // Real tool results are counted by Watch on live wire events, not SDK
-        // terminalization (which can synthesize completion for pending/history tools).
-        if (
-          e.type === "timeline.item" &&
-          hasOutput.has(e.sessionId) &&
-          e.item.type === "assistant_message" && e.item.text.trim()
-        )
-          hasOutput.set(e.sessionId, true);
-        if (
-          e.type === "session.turn" &&
-          e.state === "completed" &&
-          hasOutput.get(e.sessionId) === false
-        )
-          emit({
-            type: "session.notice",
-            sessionId: e.sessionId,
-            notice: {
-              id: "antigravity-empty",
-              severity: "warning",
-              title:
-                "本轮已结束，但没有返回正文或工具结果。请检查官方 CLI 的错误提示；消息没有自动重发。",
-            },
-          });
-        if (e.type === "session.turn" && e.state !== "started") {
-          hasOutput.delete(e.sessionId);
-          // Completion of a foreground turn does not imply its background tools ended.
+        if (e.type === "session.turn") {
+          const watch = transports.get(e.sessionId)?.watch;
+          if (e.state === "started") watch?.startTurn(e.turnId);
+          else if (watch?.turn?.turnId === e.turnId) {
+            const t = watch.turn;
+            console.log("[antigravity:turn-end]", JSON.stringify({ sessionId: e.sessionId,
+              state: e.state, ...t, endedAt: Date.now() }));
+            const empty = !t.text && !t.results;
+            if (e.state === "completed" && !t.canceled && !t.replaced &&
+                (empty || ((t.completed + t.failed) > 0 && !t.trailingText)))
+              emit({
+                type: "session.notice",
+                sessionId: e.sessionId,
+                notice: {
+                  id: empty ? "antigravity-empty" : "antigravity-tool-only",
+                  severity: empty ? "warning" : "info",
+                  title: empty
+                    ? "本轮已结束，但没有返回正文或工具结果。请检查官方 CLI 的错误提示；消息没有自动重发。"
+                    : `本轮已结束，${t.failed ? "有前台工具执行失败" : "前台工具已完成"}，但之后没有返回正文；消息没有自动重发。`,
+                },
+              });
+            watch.turn = undefined;
+          }
         }
         if (
           e.type === "timeline.item" &&
           e.item.type === "tool_call" &&
           ["completed", "failed", "canceled"].includes(e.item.status)
         ) {
-          transports.get(e.sessionId)?.finishTool(e.item.callId);
+          transports.get(e.sessionId)?.watch.finishTool(e.item.callId);
         }
         emit(e);
       });
@@ -259,6 +247,15 @@ export function provider(
         },
         send(input: ProviderInput) {
           if (closed) return Promise.reject(new Error("Provider 已关闭。"));
+          // A replacement may complete a deferred turn without sending wire cancel.
+          if (input.type === "session.interrupt" ||
+              (input.type === "session.prompt" && input.prompt.delivery !== "steer")) {
+            const turn = transports.get(input.sessionId)?.watch.turn;
+            if (turn) {
+              if (input.type === "session.interrupt") turn.canceled = true;
+              else turn.replaced = true;
+            }
+          }
           const context: Context =
             input.type === "session.open"
               ? {
@@ -298,7 +295,6 @@ export function provider(
               owned.clear();
               transports.clear();
               failures.clear();
-              hasOutput.clear();
             }
             // Do not wait indefinitely for an SDK operation stuck outside the transport.
             void graceful.catch(() => {});

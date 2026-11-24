@@ -1,5 +1,5 @@
 import readline from "node:readline";
-import { writeFileSync } from "node:fs";
+import { appendFileSync, writeFileSync } from "node:fs";
 const send = (m) =>
   process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...m }) + "\n");
 const update = (u) =>
@@ -168,6 +168,39 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
   if (m.method === "session/prompt") {
     const text = m.params.prompt[0].text;
     pending = m.id;
+    if (process.env.PROMPTS_FILE) appendFileSync(process.env.PROMPTS_FILE, "prompt\n");
+    if (text === "finish-carry")
+      update({sessionUpdate:"tool_call_update",toolCallId:"b",status:"completed"});
+    if (text.startsWith("turn-")) {
+      const mode = text.slice(5), frames = [];
+      const u = update => frames.push({jsonrpc:"2.0",method:"session/update",params:{sessionId:"native",update}});
+      const say = () => u({sessionUpdate:"agent_message_chunk",content:{type:"text",text:"PRIVATE_ASSISTANT"}});
+      const end = () => frames.push({jsonrpc:"2.0",id:m.id,result:{stopReason:"end_turn"}});
+      const flush = () => { process.stdout.write(frames.map(f => JSON.stringify(f)).join("\n")+"\n"); frames.length = 0; };
+      if (mode === "opening") say();
+      for (const id of ["a", "b"]) u({sessionUpdate:"tool_call",toolCallId:id,
+        name:mode === "schedule" ? "schedule" : "run_command",title:"PRIVATE_TITLE",
+        status:"in_progress",kind:"execute",rawInput:{CommandLine:"PRIVATE_ARGS",
+          ...(mode === "daemon" ? {IsDaemon:true} : mode === "schedule" ? {CronExpression:"* * * * *"} : {})}});
+      if (mode.startsWith("deferred")) { end(); pending = undefined; flush(); }
+      const finish = () => {
+        for (const id of ["a", "b"]) {
+          if (mode === "deferred-hold" && id === "b") continue;
+          u({sessionUpdate:"tool_call_update",toolCallId:id,status:mode === "failed" ? "failed" : "completed",
+            rawOutput:"PRIVATE_RESULT"});
+          if (mode === "interleaved" && id === "a") say();
+        }
+        if (["final", "duplicate", "deferred-final"].includes(mode)) say();
+        if (mode === "duplicate") u({sessionUpdate:"tool_call_update",toolCallId:"a",status:"completed"});
+        // Usage closes the SDK's post-response reply block, without changing Watch text state.
+        if (mode === "deferred-final") u({sessionUpdate:"usage_update",used:1,size:100});
+        if (!mode.startsWith("deferred") && mode !== "hold") { end(); pending = undefined; }
+        flush();
+      };
+      if (mode.startsWith("deferred")) setTimeout(finish, 30);
+      else finish();
+      return;
+    }
     if (text === "pending-only") {
       update({ sessionUpdate: "tool_call", toolCallId: "pending-only", title: "pending", status: "pending", kind: "execute", rawInput: {} });
       r({ stopReason: "max_tokens" });
@@ -285,7 +318,7 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
     process.env.SCENARIO !== "ignore-cancel" &&
     pending !== undefined
   ) {
-    send({ id: pending, result: { stopReason: "cancelled" } });
+    send({ id: pending, result: { stopReason: process.env.CANCEL_REASON ?? "cancelled" } });
     pending = undefined;
   }
 });
