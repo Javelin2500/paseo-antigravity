@@ -128,6 +128,8 @@ export class Watch {
     if (!m.method && id !== undefined) {
       const call = this.calls.get(id);
       this.calls.delete(id);
+      if (call?.method === "session/load" && call.session)
+        this.session(call.session, now).replay = false;
       if (call?.method === "session/prompt" && call.session) {
         const s = this.session(call.session, now);
         s.prompts.delete(id);

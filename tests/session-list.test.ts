@@ -43,7 +43,7 @@ for (const empty of [false, true]) {
         title: `Title %20 中文 ${index}`,
         updatedAt: "2026-01-01T00:00:00Z",
       }));
-      c = await provider().connect({
+      c = await provider({ checkVersion: async () => "1.5.15" }).connect({
         versions: [1],
         capabilities: ["session.list", "session.persistence"],
         launch: {

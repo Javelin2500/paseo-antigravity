@@ -95,17 +95,19 @@ test("fragmented high-frequency text and tool updates keep exact order", { timeo
   }
 });
 
-test("paused replay is not mistaken for upstream silence", { timeout: 5000 }, async () => {
+test("slow replay consumer preserves history before the native load response", { timeout: 5000 }, async () => {
   const t = createTransport(
     { command: process.execPath, args: ["-e", `
       const send=x=>process.stdout.write(JSON.stringify(x)+'\\n');
       require('node:readline').createInterface({input:process.stdin}).on('line',line=>{
         const m=JSON.parse(line);
-        send({jsonrpc:'2.0',id:m.id,result:{}});
         const history=i=>({jsonrpc:'2.0',method:'session/update',params:{sessionId:'s',
           update:{sessionUpdate:'agent_message_chunk',content:{type:'text',text:String(i)}}}});
         process.stdout.write(Array.from({length:20},(_,i)=>JSON.stringify(history(i))).join('\\n')+'\\n');
-        setTimeout(()=>{for(let i=20;i<400;i++)send(history(i));},50);
+        setTimeout(()=>{
+          for(let i=20;i<400;i++)send(history(i));
+          send({jsonrpc:'2.0',id:m.id,result:{}});
+        },50);
       });
     `], env: {} },
     { cwd: tmpdir(), env: {} }, () => {},

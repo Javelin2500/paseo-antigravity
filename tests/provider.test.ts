@@ -22,7 +22,7 @@ test(
   "real SDK honors session env, streams, permissions, empty-result notice and reload",
   { timeout: 15000 },
   async () => {
-    const c = await provider().connect({
+    const c = await provider({ checkVersion: async () => "1.5.15" }).connect({
       versions: [1],
       capabilities: ["prompt.message", "session.persistence", "permission"],
       launch: {

@@ -13,6 +13,8 @@ const commands = new Set([
   "teamwork",
   "learn",
   "boost",
+  "swarm",
+  "thinking",
 ]);
 const capability = z.object({
   antigravity: z.object({
@@ -23,7 +25,9 @@ export const vendor: AcpTransformer = {
   command(command) {
     return {
       ...command,
-      kind: commands.has(command.name) ? "command" : "skill",
+      // ACP currently omits skill provenance. Preserve explicit metadata and
+      // leave unknown names unclassified rather than guessing they are skills.
+      kind: command.kind ?? (commands.has(command.name) ? "command" : undefined),
     };
   },
   toolCall: mapToolCall,
@@ -41,10 +45,9 @@ export const options: AcpOptions = {
   perModelThinkingOptions: true,
   waitForInitialCommands: true,
   initialCommandsTimeoutMs: 1000,
-  // transport.ts holds session/load's response through a byte-aware replay quiet window.
-  // Keep the SDK's post-ready 'skip' guard until the first prompt. Zero disables it.
-  // Byte-aware waiting remains in transport; this minimal SDK wait only closes its replay phase.
-  loadReplayQuietPeriodMs: 1,
+  // agy >=1.5.15 completes history before the load reply. Keep autonomous
+  // output visible between restoration and the next user prompt.
+  loadReplayQuietPeriodMs: 0,
   deferTurnOnRunningTools: {
     keepsTurnOpen(tool) {
       const input = tool.input;

@@ -26,9 +26,9 @@ Better Paseo Antigravity wraps the official `agy acp` binary using Paseo's ACP S
 - **Preserved root-cause error messages**
   - Records the underlying transport or watchdog failure reason before closing the stream, including an unexpected exit code or signal when available.
   - Replaces generic SDK errors (`ACP transport closed unexpectedly`, `Connection closed`, `ACP turn failed`) with the actual cause without overwriting meaningful upstream errors.
-- **Byte-aware history replay for large sessions**
-  - Holds the `session/load` response in the byte-aware transport until no partial frame remains and a 200ms quiet boundary is reached, preventing large or fragmented multi-byte UTF-8 histories from being truncated mid-frame.
-  - Keeps the SDK's post-ready replay-skip guard until the first new prompt, so late historical tools do not become live work.
+- **Protocol-ordered history replay and live restoration**
+  - Requires `agy >=1.5.15`, which finishes history before the `session/load` response. Preserves that wire order without waiting for a silent output stream.
+  - Keeps fragmented UTF-8 decoding and backpressure handling. After restoration, live messages and tool updates are no longer suppressed until the next user prompt.
 - **Host sleep and wake resilience**
   - Detects system suspend or clock jumps (>5-second timer gap), including operations started in the final timer slice before suspension. Old or future-dated timestamps are rebased while fresh post-wake operations retain their deadlines.
 - **EOF, EPIPE, and backpressure safety**
@@ -44,7 +44,7 @@ Better Paseo Antigravity wraps the official `agy acp` binary using Paseo's ACP S
 
 - **OS**: macOS or Linux (Windows is not currently supported due to POSIX process-group signaling)
 - **Paseo**: `>=0.17.3 <0.18.0`
-- **Antigravity CLI**: Official `agy` `>=1.5.0`, installed and signed in on the daemon host
+- **Antigravity CLI**: Official `agy` `>=1.5.15`, installed and signed in on the daemon host
 
 ## Installation
 
@@ -78,6 +78,9 @@ paseo plugin update better-paseo-antigravity
 
 ## Known Boundaries
 
+- Earlier than `agy 1.5.15` is unsupported; provider status and each new connection check the minimum version. `1.5.16` is recommended for its upstream subagent approval/question forwarding fix, but is not required.
+- Permission options use the pinned Paseo ACP SDK. Complex forms and free-text subagent answers have not been validated; `Full access` is tool auto-approval, not a guarantee of unattended question answering or native Auto-mode equivalence.
+- Commands remain executable; unknown command/skill names are left unclassified when ACP provides no provenance.
 - Does not create a custom OAuth flow, proxy, or credential store; sign in using the official `agy` CLI on the host.
 - Does not read private Antigravity SQLite databases, inboxes, or raw transcripts.
 - Never automatically resends prompts after a stall, disconnect, or cancellation.

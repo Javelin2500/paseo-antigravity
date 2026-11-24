@@ -16,12 +16,15 @@ import {
 import { vendor, options } from "./vendor";
 import { defaults, type Limits } from "./watch";
 import { normalizeSessionCwds } from "./session-cwd";
+import { checkCliVersion } from "./cli-version";
 
 export function provider(
   testOptions: {
     limits?: Limits;
     closeTimeoutMs?: number;
     statusTimeoutMs?: number;
+    // Explicit dependency injection for mock executables, never a daemon setting.
+    checkVersion?: typeof checkCliVersion;
   } = {},
 ): ProviderRegistration {
   return {
@@ -66,24 +69,7 @@ export function provider(
       let phase = "CLI 版本检查";
       let safeFailure: string | undefined;
       try {
-        const prefix = launch.args.indexOf("acp");
-        if (prefix < 0)
-          return { available: false, diagnostic: "启动参数必须包含 acp。" };
-        const { stdout } = await execCommand(
-          launch.command,
-          [...launch.args.slice(0, prefix), "--version"],
-          { env: launch.env, timeout: remaining(), maxBuffer: 8192 },
-        );
-        const version = /\b(\d+)\.(\d+)\.(\d+)\b/.exec(stdout);
-        if (
-          !version ||
-          Number(version[1]) < 1 ||
-          (Number(version[1]) === 1 && Number(version[2]) < 5)
-        )
-          return {
-            available: false,
-            diagnostic: "需要官方 agy 1.5 或更新版本。",
-          };
+        const version = await (testOptions.checkVersion ?? checkCliVersion)(launch, remaining());
         phase = "ACP 握手";
         const probes = new Set<OwnedTransport>();
         try {
@@ -119,9 +105,11 @@ export function provider(
         }
         return {
           available: true,
-          diagnostic: `CLI ${version[0]} 与 ACP 握手正常。账号及模型访问仍由创建会话验证。\n${signIn}`,
+          diagnostic: `CLI ${version} 与 ACP 握手正常。账号及模型访问仍由创建会话验证。\n${signIn}`,
         };
-      } catch {
+      } catch (error) {
+        if (phase === "CLI 版本检查" && error instanceof Error)
+          safeFailure = error.message;
         return {
           available: false,
           // Only our fixed transport diagnostics are safe to show. Never echo raw
@@ -133,6 +121,7 @@ export function provider(
     async connect(request): Promise<ProviderConnection> {
       if (!request.launch) throw new Error("缺少官方 CLI 启动配置。");
       const launch = request.launch;
+      await (testOptions.checkVersion ?? checkCliVersion)(launch);
       const scope = new AsyncLocalStorage<Context>();
       const owned = new Set<OwnedTransport>();
       const listeners = new Set<(e: ProviderEvent) => void>();

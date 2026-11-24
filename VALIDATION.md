@@ -1,6 +1,40 @@
-# Antigravity Plus 0.2.2 Validation
+# Better Paseo Antigravity validation
+
+## 0.3.0 release
+
+- Requires official agy >=1.5.15 and Paseo >=0.17.3 <0.18.0 on macOS/Linux.
+- Includes the agy baseline and advisor follow-ups below, plus the previously unreleased ACP output, quiet-waiting and session-directory fixes.
+- Release checks: typecheck, 145 automated tests and git diff --check pass. Neon completed two read-only review passes; an independent DeepSeek review found no new blocking defects and independently passed all 145 tests.
+- Release scope is Git source plus a GitHub tag/release. This release was not installed/reloaded into the running daemon and has not received new real-account or UI validation. Historical live-validation records below apply only to their stated revisions.
+- Non-blocking follow-ups: optional v-prefixed version output support, summary wording and additional timing fixtures. Complex native question/form behavior remains unverified.
+
+## Historical baseline
+
+The sections below retain their original validation context; “unreleased” identifies the stage at which those checks were recorded.
 
 Environment: macOS, Paseo 0.17.3, official `agy` 1.5.15. This is a targeted follow-up to 0.2.1, not a new provider architecture.
+
+## Neon advisor follow-up (unreleased)
+
+- Independent Neon review reproduced a real-SDK same-chunk load/live race missed by the 260ms delayed fixture. The new same-chunk skip/replay cases failed before the fix.
+- The transport now inserts a one-off scheduling barrier after a successful load response for the pinned SDK's asynchronous replay exit. This is not an output quiet timer. The first anonymous live text run receives an isolated stable message ID so it cannot append to anonymous historical text; native message IDs and content are unchanged.
+- CLI version probing is shared by status and connect. Direct connections reject old/unrecognized versions and a missing acp argument. Mock-only tests explicitly inject a version checker rather than granting a production launch-argument bypass.
+- Two independent Neon review passes identified the load scheduling race, direct-connect version bypass, synthetic-ID lifetime across prompts, and empty-string ID handling. The latter two were reproduced with new tests before fixing them: outgoing prompt/load clears the session-specific first-run identity, and empty IDs follow the pinned SDK\'s anonymous-message semantics.
+- Added skip/replay real-SDK regressions for two pure-text prompts after restoration, both with and without prior autonomous output. Replies retain separate IDs and text, without synthetic restoration IDs leaking into user turns. Unit tests cover session isolation, repeated loads and empty IDs.
+- Typecheck, all 145 tests and git diff --check pass after the final fixes. Neon independently ran the earlier 139-test suite; the final six tests and fixes were verified by the primary agent. No installation, reload or publication.
+- SDK limitations remain: restoration approvals can precede session.opened and initial Full access configuration; permissions keyed by identical toolCallId can collide; an idle restored approval has no active turn for interrupt cleanup. Real host/UI behavior and native wire payloads require separate validation. Do not treat concurrent distinct-tool mock approvals as proof of those cases.
+
+## agy 1.5.15 baseline (unreleased)
+
+- Minimum supported CLI is now 1.5.15. Status checks reject older versions; fixtures cover 1.5.0, 1.5.14, 1.5.15, 1.5.16, 1.6.0, 2.0.0 and unrecognized version output. No CLI installation or upgrade was performed.
+- Removed the transport's global 200ms replay quiet timer and the SDK's post-ready skip-until-prompt guard. Native history must precede the load response, as documented in upstream 1.5.15. Pre-1.5.15 late-history fixtures are intentionally replaced by this ordering, not retained as supported behavior.
+- The watch exits replay on the native load response. Historical tools remain excluded; autonomous tools arriving afterward participate in cancellation tracking without needing a user prompt.
+- A regression verifies a load reply precedes continuous live updates rather than waiting for silence. Real-SDK fixtures verify post-ready autonomous text/tool output in both skip/replay modes without a new prompt. Large fragmented Unicode history and a paused consumer remain covered using native response ordering.
+- Real-SDK fixtures verify two pending approvals during restoration in both history modes, independently routed allow/deny replies in reverse order, and resolution events. These are synthetic standard ACP permissions, not proof of agy's proprietary forms, free-text questions, remote dismissal, or all Full access question behavior. Those require separate native protocol/UI validation.
+- Command mapping preserves explicit kinds, recognizes swarm/thinking, and leaves unknown names neutral. The pinned SDK currently does not pass skill provenance from ACP, so this deliberately avoids claiming reliable skill classification.
+- Typecheck and all 131 tests pass. The new transport/watch/version counterexamples failed before their fixes. No live model prompts, installed-plugin reload, deployment, or mobile UI validation were performed.
+- Retained bounded cancellation/process cleanup, native-output mapping, and SDK background-tool deferral. Removing background deferral was not necessary for the replay fix and remains a separate compatibility decision.
+- This section supersedes the replay-timer/late-history claims in older validation records below.
 
 ## ACP fidelity follow-up (unreleased)
 

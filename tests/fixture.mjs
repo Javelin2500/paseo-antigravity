@@ -12,7 +12,7 @@ const ready = () =>
 if (process.argv.includes("--version")) {
   if (process.env.SCENARIO === "slow-init")
     await new Promise((resolve) => setTimeout(resolve, 60));
-  console.log("1.5.15");
+  console.log(process.env.CLI_VERSION ?? "1.5.15");
   process.exit(0);
 }
 if (process.argv.includes("/usage")) {
@@ -78,20 +78,48 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
     setTimeout(ready, 10);
   }
   if (m.method === "session/load") {
-    r({});
     ready();
-    if (process.env.SCENARIO === "late-history") {
+    if (process.env.SCENARIO === "restore-permissions") {
+      for (const id of ["worker-a", "worker-b"]) send({
+        id, method: "session/request_permission",
+        params: {sessionId:"native",toolCall:{toolCallId:id,title:id,status:"pending"},
+          options:[{optionId:"deny",name:"Deny",kind:"reject_once"},{optionId:"yes",name:"Allow",kind:"allow_once"}]}
+      });
+      r({});
+      return;
+    }
+    if (["restore-text", "restore-text-live"].includes(process.env.SCENARIO)) {
+      update({sessionUpdate:"agent_message_chunk",content:{type:"text",text:"HISTORY"}});
+      r({});
+      if (process.env.SCENARIO === "restore-text-live") {
+        update({sessionUpdate:"agent_message_chunk",messageId:"",
+          content:{type:"text",text:"AUTONOMOUS"}});
+      }
+      return;
+    }
+    if (process.env.SCENARIO === "immediate-after-load") {
+      const u = update => ({jsonrpc:"2.0",method:"session/update",params:{sessionId:"native",update}});
+      process.stdout.write([
+        u({sessionUpdate:"agent_message_chunk",content:{type:"text",text:"HIST"}}),
+        {jsonrpc:"2.0",id:m.id,result:{}},
+        u({sessionUpdate:"agent_message_chunk",content:{type:"text",text:"LIVE_AFTER_LOAD"}}),
+        u({sessionUpdate:"tool_call",toolCallId:"live-after-load",title:"live",kind:"execute",status:"completed",rawInput:{}})
+      ].map(x => JSON.stringify(x)).join("\n")+"\n");
+      return;
+    }
+    if (process.env.SCENARIO === "live-after-load") {
+      r({});
       setTimeout(() => {
         update({
           sessionUpdate: "agent_message_chunk",
-          content: { type: "text", text: "LATE_HISTORY" },
+          content: { type: "text", text: "LIVE_AFTER_LOAD" },
         });
         update({
           sessionUpdate: "tool_call",
-          toolCallId: "late-ghost",
-          title: "late",
+          toolCallId: "live-after-load",
+          title: "live",
           kind: "execute",
-          status: "in_progress",
+          status: "completed",
           rawInput: {},
         });
       }, 260);
@@ -123,8 +151,15 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
       const end = Math.min(pos + 50003, bytes.length);
       process.stdout.write(bytes.subarray(pos, end));
       pos = end;
-      if (pos === bytes.length) clearInterval(timer);
+      if (pos === bytes.length) {
+        clearInterval(timer);
+        r({}); // agy >=1.5.15 finishes history before the response.
+      }
     }, 60);
+  }
+  if (!m.method && ["worker-a", "worker-b"].includes(m.id)) {
+    update({sessionUpdate:"agent_message_chunk",messageId:m.id,
+      content:{type:"text",text:m.id+":"+m.result.outcome.optionId}});
   }
   if (m.method === "session/close") {
     if (process.env.CLOSE_FILE) writeFileSync(process.env.CLOSE_FILE, "closed");

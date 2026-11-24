@@ -8,13 +8,15 @@ Select Better Paseo Antigravity when creating a new agent. Existing sessions cre
 
 Idle sessions and quiet active turns wait silently without no-progress notices. Timeout and failure diagnostics are preserved. Long-running foreground tools and pending permission approvals are not terminated solely for silence. If a turn has no active foreground tools or pending approvals and makes no progress for 15 minutes, the plugin closes the stuck process. When you stop a turn, cancellation targets the requests and foreground tools present at that moment, each with a 5-second fallback deadline. Later requests do not inherit an old target's deadline. On shutdown, the plugin attempts a time-bounded graceful ACP close and then cleans up the detached process group. Prompts are never resent automatically.
 
-Session history replay waits for complete frames and a 200ms quiet boundary in the transport layer. The SDK then skips late history until the first new prompt, preventing historical tools from becoming live work. Tool state is retired on explicit tool-terminal events, not merely because a foreground turn completed; background tools preserved for a follow-up keep running. Sleep recovery includes work started in the last timer slice before suspension while preserving fresh post-wake deadlines.
+Session history follows the native `session/load` response boundary provided by agy 1.5.15 and later. The transport preserves complete UTF-8 frames and wire order without waiting for silence; live updates after restoration do not require a new prompt to become visible. Tool state is retired on explicit tool-terminal events, not merely because a foreground turn completed; background tools preserved for a follow-up keep running. Sleep recovery includes work started in the last timer slice before suspension while preserving fresh post-wake deadlines.
 
 ## Setup and requirements
 
-Requires macOS or Linux, Paseo 0.17.3, and the official `agy` CLI version 1.5 or later already installed and signed in on the daemon host.
+Requires macOS or Linux, Paseo 0.17.3, and the official `agy` CLI version 1.5.15 or later already installed and signed in on the daemon host.
 
 Provider status checks verify the `agy` CLI version and perform an ACP handshake within a shared ~95-second cold-start budget. Recognized sign-in failures are reported without printing authorization URLs. Account eligibility and model access are still verified when opening a session. Usage quotas are queried through `agy -p /usage --output-format json` using the existing CLI login and environment.
+
+Version 1.5.16 is recommended for its subagent approval/question forwarding fix. Permission choices use the Paseo ACP SDK; complex forms and free-text subagent answers remain unverified. Full access automatically approves eligible tool requests, not arbitrary questions. Command names without classification metadata remain unclassified rather than being assumed to be skills.
 
 ## Privacy and boundaries
 

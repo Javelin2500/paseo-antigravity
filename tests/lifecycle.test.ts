@@ -19,6 +19,7 @@ const config: ProviderSessionConfig = {
 };
 async function setup(scenario = "", extra: Record<string, string> = {}) {
   const c = await provider({
+    checkVersion: async () => "1.5.15",
     limits: { startup: 2000, silent: 200, cancel: 80 },
     closeTimeoutMs: 150,
   }).connect({
@@ -388,11 +389,69 @@ test(
   },
 );
 for (const history of ["skip", "replay"] as const)
+  test(`restored concurrent subagent approvals route independently (${history})`, {timeout:6000}, async () => {
+    const h = await setup("restore-permissions");
+    try {
+      await h.open();
+      const opened = h.rows.find(e => e.type === "session.opened");
+      assert.ok(opened?.type === "session.opened");
+      await h.c.send({type:"session.close",sessionId:"s",requestId:"close"});
+      await h.wait(e => e.type === "session.closed");
+      const from = h.rows.length;
+      await h.c.send({type:"session.open",sessionId:"s",requestId:"restore",config,history,persistence:opened.persistence});
+      await h.wait(e => e.type === "session.ready",from);
+      // Answer in reverse order, without sending a prompt after restoration.
+      for (const [name, action] of [["worker-b","deny"],["worker-a","yes"]]) {
+        const e = await h.wait(e => e.type === "session.permission" && e.request.title === name,from);
+        assert.ok(e.type === "session.permission");
+        assert.deepEqual(e.request.actions?.map(a => a.id), ["deny","yes"]);
+        await h.c.send({type:"session.permission",sessionId:"s",permissionId:e.request.id,
+          response:{behavior:action === "yes" ? "allow" : "deny",selectedActionId:action}});
+        await h.wait(e => e.type === "timeline.item" && e.item.type === "assistant_message" &&
+          e.item.text === name+":"+action,from);
+      }
+      assert.equal(h.rows.slice(from).filter(e => e.type === "session.permission_resolved").length,2);
+    } finally { await h.c.close(); }
+  });
+
+for (const history of ["skip", "replay"] as const)
+for (const scenario of ["restore-text", "restore-text-live"])
+  test(`restored pure-text replies stay separate across prompts (${history}, ${scenario})`, {timeout:6000}, async () => {
+    const h = await setup(scenario);
+    try {
+      await h.open();
+      const opened = h.rows.find(e => e.type === "session.opened");
+      assert.ok(opened?.type === "session.opened");
+      await h.c.send({type:"session.close",sessionId:"s",requestId:"close"});
+      await h.wait(e => e.type === "session.closed");
+      const restored = h.rows.length;
+      await h.c.send({type:"session.open",sessionId:"s",requestId:"restore",
+        config,history,persistence:opened.persistence});
+      await h.wait(e => e.type === "session.ready",restored);
+      if (scenario === "restore-text-live")
+        await h.wait(e => e.type === "timeline.item" && e.item.type === "assistant_message" &&
+          e.item.text === "AUTONOMOUS",restored);
+      const ids = [];
+      for (const text of ["ONE","TWO"]) {
+        const from = await h.prompt(text);
+        await h.wait(e => e.type === "session.turn" && e.state === "completed",from);
+        const reply = h.rows.slice(from).find(e => e.type === "timeline.item" && e.item.type === "assistant_message");
+        assert.ok(reply?.type === "timeline.item" && reply.item.type === "assistant_message");
+        assert.equal(reply.item.text,"OK");
+        assert.ok(!reply.item.messageId?.startsWith("paseo-live:"));
+        ids.push(reply.item.id);
+      }
+      assert.notEqual(ids[0],ids[1]);
+    } finally { await h.c.close(); }
+  });
+
+for (const history of ["skip", "replay"] as const)
+for (const scenario of ["live-after-load", "immediate-after-load"])
   test(
-    `0.2.2 late history after ready is skipped until first prompt (${history})`,
+    `live output after load is visible without a new prompt (${history}, ${scenario})`,
     { timeout: 6000 },
     async () => {
-      const h = await setup("late-history");
+      const h = await setup(scenario);
       try {
         await h.open();
         const opened = h.rows.find((e) => e.type === "session.opened");
@@ -414,18 +473,12 @@ for (const history of ["skip", "replay"] as const)
         });
         await h.wait((e) => e.type === "session.ready", from);
         await sleep(350);
-        assert.ok(
-          !h.rows
-            .slice(from)
-            .some(
-              (e) =>
-                e.type === "timeline.item" &&
-                ((e.item.type === "assistant_message" &&
-                  e.item.text === "LATE_HISTORY") ||
-                  (e.item.type === "tool_call" &&
-                    e.item.callId === "late-ghost")),
-            ),
-        );
+        for (const kind of ["assistant_message", "tool_call"]) {
+          assert.ok(h.rows.slice(from).some(e => e.type === "timeline.item" &&
+            e.item.type === kind && (e.item.type === "assistant_message"
+              ? e.item.text === "LIVE_AFTER_LOAD"
+              : e.item.type === "tool_call" && e.item.callId === "live-after-load")));
+        }
         const p = await h.prompt("hello");
         await h.wait(
           (e) => e.type === "session.turn" && e.state === "completed",

@@ -97,7 +97,7 @@ test("load replay tools do not block later inactivity detection", () => {
   );
   tool(w);
   w.observe("in", { jsonrpc: "2.0", id: 10, result: {} }, 2);
-  tool(w, "in_progress", 3);
+  // History ends at the response; post-response tools would be live work.
   assert.deepEqual(w.check(40), {});
   prompt(w, 1, 50);
   assert.ok(w.check(201).failure);

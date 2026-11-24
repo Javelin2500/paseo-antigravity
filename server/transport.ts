@@ -5,6 +5,7 @@ import type { ProviderLaunch } from "@getpaseo/plugin/server/provider";
 import { Watch, defaults, type Limits } from "./watch";
 import { stopProcessGroup } from "./process-group";
 import { ToolResultMapper } from "./tool-results";
+import { LoadBoundary } from "./load-boundary";
 
 export interface Context {
   cwd: string;
@@ -19,7 +20,6 @@ export interface OwnedTransport {
   finishTool(id: string): void;
 }
 const MAX_FRAME = 16 * 1024 * 1024;
-const REPLAY_QUIET_MS = 200;
 function parse(line: string): AcpStreamMessage {
   if (
     line.startsWith("Open the following link to authenticate") ||
@@ -73,6 +73,18 @@ export function createTransport(
   });
   const watch = new Watch(limits, onToolResult);
   const toolResults = new ToolResultMapper();
+  const loadBoundary = new LoadBoundary();
+  let boundaryPending = false;
+  let releaseBoundary: (() => void) | undefined;
+  const yieldTurn = () => new Promise<void>((resolve) => {
+    const timer = setTimeout(done, 0);
+    function done() {
+      clearTimeout(timer);
+      releaseBoundary = undefined;
+      resolve();
+    }
+    releaseBoundary = done;
+  });
   let finish!: () => void;
   const finished = new Promise<void>((r) => {
     finish = r;
@@ -83,8 +95,7 @@ export function createTransport(
     failure: string | undefined;
   let groupClosing: Promise<string | undefined> | undefined;
   const stopOwned = () => (groupClosing ??= stopProcessGroup(child.pid));
-  let exitTimer: ReturnType<typeof setTimeout> | undefined,
-    replayTimer: ReturnType<typeof setTimeout> | undefined;
+  let exitTimer: ReturnType<typeof setTimeout> | undefined;
   let exitInfo:
     | { code: number | null; signal: NodeJS.Signals | null }
     | undefined;
@@ -94,10 +105,7 @@ export function createTransport(
   });
   let ending: Promise<void> | undefined;
   const decoder = new StringDecoder("utf8");
-  let buffer = "",
-    lastRead = Date.now();
-  let loadId: string | number | undefined,
-    loadResponse: AcpStreamMessage | undefined;
+  let buffer = "";
   const recordFailure = (message: string) => {
     if (!failure) {
       failure = message;
@@ -114,10 +122,10 @@ export function createTransport(
           /* consumer already cancelled */
         }
       }
+      releaseBoundary?.();
       toolResults.clear();
       clearInterval(timer);
       clearTimeout(exitTimer);
-      clearTimeout(replayTimer);
       child.stdin.end();
       try {
         const error = await stopOwned();
@@ -142,46 +150,15 @@ export function createTransport(
     watch.observe("in", frame, Date.now());
     controller.enqueue(toolResults.map(frame));
   };
-  // In connector mode the SDK cannot see partial byte reads. Hold the native load response
-  // until the same 200ms replay boundary is reached AND no incomplete frame remains.
-  // History itself is streamed immediately, inside SDK's still-open replay window.
-  const armReplay = () => {
-    clearTimeout(replayTimer);
-    if (!loadResponse || closed) return;
-    replayTimer = setTimeout(() => {
-      if (closed || !loadResponse) return;
-      if (
-        buffer.length || child.stdout.isPaused() ||
-        Date.now() - lastRead < REPLAY_QUIET_MS
-      ) {
-        armReplay();
-        return;
-      }
-      const response = loadResponse;
-      loadResponse = undefined;
-      loadId = undefined;
-      deliver(response);
-    }, REPLAY_QUIET_MS);
-    replayTimer.unref();
-  };
-  const receive = (frame: AcpStreamMessage) => {
-    if (loadId !== undefined && !("method" in frame) && frame.id === loadId) {
-      if ("error" in frame) {
-        loadId = undefined;
-        deliver(frame);
-      } else {
-        loadResponse = frame;
-        armReplay();
-      }
-    } else deliver(frame);
-  };
+  // agy >=1.5.15 finishes history before the load response. Preserve wire order;
+  // a live session need not become quiet after that boundary.
   const consume = () => {
     let pos: number;
     while ((pos = buffer.indexOf("\n")) >= 0) {
       if (pos > MAX_FRAME) throw new Error("Antigravity 消息超过大小限制。");
       const line = buffer.slice(0, pos).trim();
       buffer = buffer.slice(pos + 1);
-      if (line) receive(parse(line));
+      if (line) deliver(parse(line));
     }
     if (buffer.length > MAX_FRAME)
       throw new Error("Antigravity 消息超过大小限制。");
@@ -192,14 +169,8 @@ export function createTransport(
       try {
         buffer += decoder.end();
         consume();
-        if (buffer.trim()) receive(parse(buffer.trim()));
+        if (buffer.trim()) deliver(parse(buffer.trim()));
         buffer = "";
-        if (loadResponse) {
-          const frame = loadResponse;
-          loadResponse = undefined;
-          loadId = undefined;
-          deliver(frame);
-        }
         // stdout EOF can precede Node's exit event. Briefly wait for metadata without
         // delaying delivery of already parsed final replies or inventing a failure code.
         let timer: ReturnType<typeof setTimeout> | undefined;
@@ -270,6 +241,15 @@ export function createTransport(
   const stream: AcpStream = {
     readable: new ReadableStream<AcpStreamMessage>({
       async pull(c) {
+        if (boundaryPending) {
+          boundaryPending = false;
+          // Fixed SDK 0.17.3 drains notifications via setTimeout(0) after load.
+          // First yield lets its continuation register that timer; the second
+          // lets it finish before live frames enter the RPC reader. Never wait
+          // for upstream silence. Close interrupts either scheduling turn.
+          await yieldTurn();
+          if (!closed) await yieldTurn();
+        }
         // Drain already-decoded frames before resuming the pipe. Resuming on
         // every read lets each consumed frame admit another whole pipe chunk,
         // so a slow consumer can otherwise accumulate the producer's output.
@@ -278,33 +258,32 @@ export function createTransport(
           controller.desiredSize !== null &&
           controller.desiredSize > 0
         ) {
-          if (child.stdout.isPaused() && loadResponse) {
-            lastRead = Date.now();
-            armReplay();
-          }
           child.stdout.resume();
         }
         try {
           const next = await reader.read();
-          if (next.done) c.close();
-          else c.enqueue(next.value);
+          if (next.done) {
+            loadBoundary.clear();
+            c.close();
+          }
+          else {
+            const mapped = loadBoundary.incoming(next.value);
+            boundaryPending = mapped.boundary;
+            c.enqueue(mapped.frame);
+          }
         } catch (e) {
           c.error(e);
         }
       },
       cancel(reason) {
+        loadBoundary.clear();
         return reader.cancel(reason);
       },
     }),
     writable: new WritableStream<AcpStreamMessage>({
       write(frame) {
         if (closed) throw new Error(failure ?? "Antigravity 连接已关闭。");
-        if (
-          "method" in frame &&
-          frame.method === "session/load" &&
-          "id" in frame
-        )
-          loadId = frame.id ?? undefined;
+        loadBoundary.outgoing(frame);
         watch.observe("out", frame, Date.now());
         return new Promise<void>((resolve, reject) =>
           child.stdin.write(JSON.stringify(frame) + "\n", (error) => {
@@ -333,11 +312,9 @@ export function createTransport(
   child.stderr.resume();
   child.stdout.on("data", (chunk: Buffer) => {
     if (closed) return;
-    lastRead = Date.now();
     try {
       buffer += decoder.write(chunk);
       consume();
-      armReplay();
       if (controller.desiredSize !== null && controller.desiredSize <= 0)
         child.stdout.pause();
     } catch (e) {
