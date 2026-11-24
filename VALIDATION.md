@@ -2,6 +2,17 @@
 
 Environment: macOS, Paseo 0.17.3, official `agy` 1.5.15. This is a targeted follow-up to 0.2.1, not a new provider architecture.
 
+## Issue #2 follow-up (unreleased)
+
+- Session-list `cwd` values are normalized before publication to Paseo, which validates the directory before `session.open`. No persistence, title, timestamp or transcript fields are rewritten.
+- Explicit local file URLs are converted with `fileURLToPath`. Pathless `file://` and `file://localhost` inputs stay unchanged instead of becoming `/`; explicit root URLs still work. Ambiguous URLs, encoded separators/NULs (including `%5C` on POSIX) and encoded dot-segment traversal are left unchanged. Bare absolute paths are decoded at most once, only after the original entry returns `ENOENT` from `lstat` and the decoded path is an existing directory according to `stat`. Literal entries, dangling symlinks and unknown filesystem errors are preserved.
+- Normalization is synchronous to preserve event order. Repeated cwd values share a result only within one `sessions` event; later events recheck the filesystem. This reduces duplicate I/O but does not impose a time bound on slow mounts.
+- The original real-SDK regression failed before the fix for both an encoded Chinese directory and a file URL. Review follow-up counterexamples for pathless file URLs and dangling symlinks also failed before their fixes. All 91 tests and `pnpm typecheck` now pass on macOS with the pinned `@getpaseo/plugin` 0.17.3 development SDK.
+- Twenty-five added tests cover Chinese/nested paths, spaces, special characters, literal percent names, one-pass decoding, valid/dangling symlinks, file URL boundaries, invalid encodings, unsafe paths, missing directories, files, filesystem errors, per-event deduplication, filesystem changes between lists, mixed/duplicate session rows and empty lists. The real SDK with a mock ACP server resumes the original native session using the corrected process directory, reports the corrected opened cwd and replays encoded transcript text unchanged.
+- Real CLI validation passed with official `agy` 1.5.16 and `gemini-4-neon`: a new synthetic conversation in a temporary Chinese/space directory appeared in the unmodified SDK's list with an encoded cwd. The patched list restored its actual directory and preserved its metadata. Native filtering by the actual cwd found the same session; loading it with the corrected cwd succeeded and replayed the synthetic marker with the original persistence identity.
+- Reproduce that opt-in check with `node --import tsx scripts/live-session-cwd.ts --confirm-live`. It uses the existing CLI subscription for one small synthetic prompt, denies permission requests, and prints only validation flags. It closes its runtimes and removes its temporary directory, but leaves the synthetic native history entry; no existing conversation is opened or prompted.
+- The installed plugin and daemon were not changed. Actual import through the Paseo UI, including the reported daemon 0.17.4 environment, remains unverified. The release validation below is the previous 0.2.2 record, separate from this follow-up.
+
 ## Changes and regression evidence
 
 | Issue | 0.2.2 fix and evidence |

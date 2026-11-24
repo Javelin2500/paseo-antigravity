@@ -15,6 +15,7 @@ import {
 } from "./transport";
 import { vendor, options } from "./vendor";
 import { defaults, type Limits } from "./watch";
+import { normalizeSessionCwds } from "./session-cwd";
 
 export function provider(
   testOptions: {
@@ -188,6 +189,12 @@ export function provider(
       }
       const hasText = new Map<string, boolean>();
       const off = core.onEvent((e) => {
+        // Paseo validates the import directory before sending session.open.
+        if (e.type === "sessions")
+          e = {
+            ...e,
+            sessions: normalizeSessionCwds(e.sessions),
+          };
         if (
           e.type === "session.runtime_failed" ||
           (e.type === "session.turn" && e.state === "failed")
