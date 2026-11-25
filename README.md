@@ -53,7 +53,7 @@ Paseo's built-in Antigravity provider can run into reliability issues during rea
 
 ## Requirements
 
-- **OS**: macOS or Linux (Windows is not currently supported due to POSIX process-group signaling)
+- **OS**: macOS, Linux, or Windows. On Windows, cleanup uses `taskkill /T` on the live process tree, so a descendant whose parent already exited is not reached
 - **Paseo**: `>=0.17.3 <0.18.0`
 - **Antigravity CLI**: Official `agy` `>=1.5.15`, installed and signed in on the daemon host
 

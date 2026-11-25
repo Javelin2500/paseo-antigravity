@@ -19,7 +19,7 @@ Select Better Paseo Antigravity when creating a new agent. Existing sessions cre
 
 ## Setup and requirements
 
-- **OS**: macOS or Linux (Windows is unsupported due to POSIX process-group signaling).
+- **OS**: macOS, Linux, or Windows. On Windows, cleanup stops the live process tree under agy; a descendant whose parent already exited is not reached.
 - **Paseo**: `>=0.17.3 <0.18.0`.
 - **Antigravity CLI**: Official `agy` `>=1.5.15` installed and signed in on the daemon host (`1.5.16` recommended for its upstream subagent approval/question forwarding fix).
 

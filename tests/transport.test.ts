@@ -1,5 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { realpathSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { setTimeout as sleep } from "node:timers/promises";
 import { createTransport } from "../server/transport.ts";
 import type { AcpStreamMessage } from "@getpaseo/plugin/server/acp";
@@ -92,6 +94,7 @@ test("cancel stream alone cleans up child", async () => {
   assert.equal(alive(t.pid!), false);
 });
 test("native cwd and environment are preserved", async () => {
+  const cwd = realpathSync(tmpdir());
   const t = createTransport(
     {
       command: process.execPath,
@@ -101,13 +104,13 @@ test("native cwd and environment are preserved", async () => {
       ],
       env: { AUDIT_A: "launch", GEMINI_HOME: "/fixture-original" },
     },
-    { cwd: "/tmp", env: { AUDIT_A: "session" } },
+    { cwd, env: { AUDIT_A: "session" } },
     () => {},
   );
   try {
     const m = await t.stream.readable.getReader().read();
     assert.deepEqual((m.value as { result: unknown }).result, {
-      cwd: "/private/tmp",
+      cwd,
       a: "session",
       home: "/fixture-original",
     });

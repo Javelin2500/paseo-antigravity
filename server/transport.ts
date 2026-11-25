@@ -58,8 +58,6 @@ export function createTransport(
   limits: Limits = defaults,
   onFailure: (message: string) => void = () => {},
 ): OwnedTransport {
-  if (process.platform === "win32")
-    throw new Error("当前进程管理实现仅支持 macOS / Linux。");
   for (const value of Object.values(limits))
     if (!Number.isFinite(value) || value <= 0)
       throw new Error("Watch 时间限制必须是正数。");
@@ -67,7 +65,10 @@ export function createTransport(
     cwd: context.cwd,
     env: { ...launch.env, ...context.env },
     shell: false,
-    detached: true,
+    // POSIX: own a process group. Windows: detached means DETACHED_PROCESS (no
+    // console), so agy's console tools would each open a window; keep a hidden one.
+    detached: process.platform !== "win32",
+    windowsHide: true,
     stdio: "pipe",
   });
   const watch = new Watch(limits);
