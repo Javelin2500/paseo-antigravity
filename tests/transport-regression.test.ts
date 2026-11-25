@@ -24,13 +24,18 @@ test("flushes final UTF8 frame without newline", async () => {
     await t.close();
   }
 });
+// Windows: closing the child's fd 0 does not fail parent writes, so the stdin
+// reader exits instead while a detached descendant still holds stdout.
+const epipe =
+  process.platform === "win32"
+    ? `require('node:child_process').spawn(process.execPath,['-e',"setTimeout(()=>process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:2,result:{final:true}})),300)"],{stdio:['ignore','inherit','ignore'],detached:true}).unref();process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:1,result:{ready:true}})+'\\n',()=>process.exit(0));`
+    : `require('node:fs').closeSync(0);console.log(JSON.stringify({jsonrpc:'2.0',id:1,result:{ready:true}}));setTimeout(()=>process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:2,result:{final:true}})),30);setTimeout(()=>process.exit(0),70);`;
 test("stdin EPIPE cannot discard a final stdout reply", async () => {
-  const t = make(
-    `require('node:fs').closeSync(0);console.log(JSON.stringify({jsonrpc:'2.0',id:1,result:{ready:true}}));setTimeout(()=>process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:2,result:{final:true}})),30);setTimeout(()=>process.exit(0),70);`,
-  );
+  const t = make(epipe);
   try {
     const r = t.stream.readable.getReader();
     await r.read();
+    if (process.platform === "win32") await sleep(100);
     await assert.rejects(
       t.stream.writable
         .getWriter()

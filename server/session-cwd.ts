@@ -15,7 +15,7 @@ export function normalizeSessionCwd(
   if (
     /%(?:2f|5c|00)/i.test(cwd) ||
     cwd.includes("\0") ||
-    cwd.split("/").some((segment) => {
+    cwd.split(/[\\/]/).some((segment) => {
       if (!/%2e/i.test(segment)) return false;
       const decoded = segment.replace(/%2e/gi, ".");
       return decoded === "." || decoded === "..";

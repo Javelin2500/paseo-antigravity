@@ -1,3 +1,5 @@
+import { spawnSync } from "node:child_process";
+import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
 export interface GroupOps {
@@ -44,13 +46,34 @@ export async function stopGroup(
   if ((await attempt("SIGKILL")) === "denied")
     return "无法确认 Antigravity 进程组已回收（系统拒绝信号）。请检查本机进程权限。";
 }
+const TASKKILL = join(process.env.SystemRoot ?? "C:\\Windows", "System32", "taskkill.exe");
+/** Windows has no process groups: taskkill /T walks the live tree from the leader.
+ * shortcut: descendants whose parent chain to the leader is already broken are
+ * not reached; switch to a Job Object if agy is observed leaving such orphans. */
+export function windowsSignal(
+  pid: number,
+  signal: NodeJS.Signals | 0,
+  run = (args: string[]) => spawnSync(TASKKILL, args, { windowsHide: true, stdio: "ignore" }).status,
+) {
+  if (signal === 0) return void process.kill(pid, 0);
+  const args = ["/PID", String(pid), "/T"];
+  if (signal === "SIGKILL") args.push("/F");
+  const status = run(args);
+  if (status === 0) return;
+  // Exit codes are ambiguous: non-forced taskkill on a console-only tree returns 128
+  // ("not found") while it is alive. Probe the leader; a refusal then reads like a
+  // failed SIGTERM and the state machine forces after the grace period.
+  process.kill(pid, 0);
+  throw Object.assign(new Error(`taskkill exited with ${status}`), { code: "EIO" });
+}
 export function stopProcessGroup(pid: number | undefined, graceMs = 1000) {
   return pid === undefined
     ? Promise.resolve(undefined)
     : stopGroup(
         {
           signal: (s) => {
-            process.kill(-pid, s);
+            if (process.platform === "win32") windowsSignal(pid, s);
+            else process.kill(-pid, s);
           },
           sleep,
           now: Date.now,

@@ -155,7 +155,8 @@ for (const [text, reason] of [
   ["silent", "连续无进展"],
   ["deferred-bad", "非 ACP"],
   ["exit-17", "退出码 17"],
-  ["signal-term", "SIGTERM"],
+  // Windows has no signals: self-kill is TerminateProcess with exit code 1.
+  ["signal-term", process.platform === "win32" ? "退出码 1" : "SIGTERM"],
 ] as const) {
   test(
     `SDK delivers specific runtime and turn failure: ${text}`,

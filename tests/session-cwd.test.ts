@@ -3,6 +3,11 @@ import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+const win32 = process.platform === "win32";
+// Windows forbids "?" in names; unprivileged symlinks there are directory junctions.
+const names = (list: string[]) => (win32 ? list.filter((n) => !n.includes("?")) : list);
+const link = (target: string, path: string) => symlinkSync(target, path, win32 ? "junction" : undefined);
 import { pathToFileURL } from "node:url";
 import { normalizeSessionCwd, normalizeSessionCwds } from "../server/session-cwd.ts";
 
@@ -22,7 +27,7 @@ function fixture(t: test.TestContext) {
   return { root, dir };
 }
 
-for (const name of ["中文项目", "space name", "café 🚀", "a+b #?%&", "中文/嵌套 项目"]) {
+for (const name of names(["中文项目", "space name", "café 🚀", "a+b #?%&", "中文/嵌套 项目"])) {
   test(`decodes one existing absolute directory: ${name}`, (t) => {
     const { root, dir } = fixture(t);
     const actual = dir(name);
@@ -70,18 +75,18 @@ test("does not canonicalize existing symlinks", (t) => {
   const { root, dir } = fixture(t);
   const actual = dir("target");
   const literalLink = join(root, "literal%20link");
-  symlinkSync(actual, literalLink);
+  link(actual, literalLink);
   dir("literal link");
   assert.equal(normalizeSessionCwd(literalLink), literalLink);
   const decodedLink = join(root, "decoded link");
-  symlinkSync(actual, decodedLink);
+  link(actual, decodedLink);
   assert.equal(normalizeSessionCwd(join(root, "decoded%20link")), decodedLink);
 });
 
 test("preserves dangling literal symlinks instead of selecting another directory", (t) => {
   const { root, dir } = fixture(t);
   const original = join(root, "literal%20link");
-  symlinkSync(join(root, "missing-target"), original);
+  link(join(root, "missing-target"), original);
   dir("literal link");
   assert.equal(normalizeSessionCwd(original), original);
 });
@@ -91,13 +96,14 @@ test("preserves pathless file URLs but converts explicit root URLs", () => {
     unchangedWithoutStat(url);
   }
   for (const url of ["file:/", "file:///", "file://localhost/", "FILE://LOCALHOST/"]) {
-    assert.equal(normalizeSessionCwd(url), "/");
+    // A drive-less root is not an absolute Windows path, so it stays unchanged there.
+    assert.equal(normalizeSessionCwd(url), win32 ? url : "/");
   }
 });
 
 test("converts explicit local file URLs with Node URL semantics", (t) => {
   const { root, dir } = fixture(t);
-  for (const name of ["中文项目", "space name", "a+b #?%&", "literal%20name"]) {
+  for (const name of names(["中文项目", "space name", "a+b #?%&", "literal%20name"])) {
     const actual = dir(name);
     const url = pathToFileURL(actual).href;
     assert.equal(normalizeSessionCwd(url), actual);
@@ -117,7 +123,7 @@ function unchangedWithoutStat(input: string) {
 }
 
 test("leaves relative paths, other schemes and plain paths untouched", () => {
-  for (const path of ["", "relative%20dir", "./%E4%B8%AD", "../space%20name", "~/space%20name", "https://example.test/a%20b", "C:\\a%20b", "/plain/中文/./dir", "/plain/a+b"]) {
+  for (const path of ["", "relative%20dir", "./%E4%B8%AD", "../space%20name", "~/space%20name", "https://example.test/a%20b", ...(win32 ? [] : ["C:\\a%20b"]),"/plain/中文/./dir", "/plain/a+b"]) {
     unchangedWithoutStat(path);
   }
 });
@@ -132,6 +138,7 @@ test("never decodes separators, NULs or dot-segment traversal", () => {
   for (const name of ["a%2Fb", "a%2fb", "a%5Cb", "a%5cb", "a%00b", "a\0b", "%2e", "%2E%2e", ".%2e", "%2e."]) {
     unchangedWithoutStat(`/tmp/${name}/child`);
     unchangedWithoutStat(`file:///tmp/${name}/child`);
+    unchangedWithoutStat(`C:\\tmp\\${name}\\child`);
   }
 });
 
